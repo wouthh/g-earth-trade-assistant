@@ -103,22 +103,44 @@ public final class TradeAssistantExtension extends Extension implements AutoClos
             observeChecked(message);
         } catch (RuntimeException e) {
             gate.invalidate();
-            runtime.execute(engine::malformed);
+            runtime.execute(
+                    () -> {
+                        engine.on(new ContextLost());
+                        engine.malformed();
+                    });
         }
     }
 
     private void observeChecked(HMessage message) {
-        if (closed.get() || message.isBlocked()) return;
+        if (closed.get()) return;
         PacketBindings current = bindings;
         if (current == null) return;
         boolean incoming = message.getDestination() == HMessage.Direction.TOCLIENT;
         HPacket p = message.getPacket();
         Binding b = current.lookup(incoming, p.headerId());
         if (b == null) return;
+        if (message.isBlocked()) {
+            // An incoming context change already happened on the hotel, even when another
+            // extension prevents the client from seeing it. Its body cannot establish usable
+            // context.
+            if (incoming
+                    && (b == Binding.ROOM_READY
+                            || b == Binding.ROOM_RIGHTS
+                            || b == Binding.ROOM_RIGHTS_2
+                            || b == Binding.ROOM_RIGHTS_3)) {
+                gate.invalidate();
+                runtime.execute(() -> engine.on(new ContextLost()));
+            }
+            return;
+        }
         if (p.getFormat()
                 != (incoming ? HPacketFormat.WEDGIE_INCOMING : HPacketFormat.WEDGIE_OUTGOING)) {
             gate.invalidate();
-            runtime.execute(engine::malformed);
+            runtime.execute(
+                    () -> {
+                        engine.on(new ContextLost());
+                        engine.malformed();
+                    });
             return;
         }
         if (b == Binding.ROOM_READY
@@ -134,7 +156,11 @@ public final class TradeAssistantExtension extends Extension implements AutoClos
         byte[] bytes = p.toBytes();
         if (bytes.length > 1_000_000) {
             gate.invalidate();
-            runtime.execute(engine::malformed);
+            runtime.execute(
+                    () -> {
+                        engine.on(new ContextLost());
+                        engine.malformed();
+                    });
             return;
         }
         runtime.execute(
@@ -144,6 +170,7 @@ public final class TradeAssistantExtension extends Extension implements AutoClos
                         engine.on(codec.decode(b, bytes));
                     } catch (RuntimeException e) {
                         gate.invalidate();
+                        engine.on(new ContextLost());
                         engine.malformed();
                     }
                 });

@@ -10,6 +10,7 @@ This repository owns G-Earth Trade Assistant, a standalone Origins currency-furn
 
 - `domain/` owns typed identities, observed inventory, the serialized conversion state machine, and the unavailable purchase policy. No domain class may import native packet types.
 - `protocol/` is the only native API and packet boundary. `runtime/` owns scheduling, the send cancellation fence and atomic local state. `ui/` owns Swing controls and immutable snapshots.
+- Blocked incoming context notifications still invalidate the synchronous send fence and room context. Room observation overflow freezes recording until new context; never keep growing a halted collection.
 - Listeners copy only relevant bounded packet bodies, enqueue facts, return packets unchanged and never wait for disk, timers or hotel responses. Swing reads/updates belong to its event-dispatch thread; persistence belongs to the worker.
 - Register listeners once, serialize sends, reserve actual observed instances, journal intent before transport, and confirm only matching observations. Never infer an ID sequence, ownership, credited delta, price or pagination from a name or timing.
 - Recovery archives contain only unresolved evidence and are capped at 32 files / 32 MB. Preserve unreadable originals before replacement; never silently prune evidence. Flush renamed journal entries and newly created directory ancestors on supported providers; document Windows directory-flush limitations.

@@ -44,7 +44,7 @@ public final class ConversionEngine {
     private final Set<Handle> selected = new HashSet<>();
     private State state = State.DISARMED;
     private Config config;
-    private boolean connected, recovery;
+    private boolean connected, recovery, roomObservationLimit;
     private int room, observed, placed, redeemed, failed, uncertain;
     private Long balance;
     private Target target;
@@ -105,6 +105,7 @@ public final class ConversionEngine {
         current = null;
         drops.clear();
         seenAdds.clear();
+        roomObservationLimit = false;
         state = recovery ? State.UNCERTAIN : State.DISARMED;
         persist();
     }
@@ -115,6 +116,9 @@ public final class ConversionEngine {
         if (active()) throw new IllegalStateException("A run is already active");
         if (!connected || room <= 0)
             throw new IllegalStateException("Enter a supported Origins room first");
+        if (roomObservationLimit)
+            throw new IllegalStateException(
+                    "Room observation limit reached; re-enter the room before arming");
         if (recovery || outstanding() || !knownRoom.isEmpty())
             throw new IllegalStateException(
                     "Review and acknowledge outstanding journal entries first");
@@ -268,11 +272,13 @@ public final class ConversionEngine {
                 match(d);
             }
         } else if (e instanceof Added a) {
-            if (!seenAdds.add(a.id().value())) return;
-            if (seenAdds.size() > 100_000) {
-                halt("Room observation limit reached.");
+            if (roomObservationLimit || seenAdds.contains(a.id().value())) return;
+            if (seenAdds.size() >= 100_000) {
+                roomObservationLimit = true;
+                halt("Room observation limit reached; re-enter the room before arming.");
                 return;
             }
+            seenAdds.add(a.id().value());
             Drop d = drops.get(new Handle(-a.id().value()));
             if (d != null) {
                 knownRoom.add(a.id().value());

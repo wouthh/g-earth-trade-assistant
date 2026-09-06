@@ -8,6 +8,34 @@ import org.junit.jupiter.api.Test;
 
 class ConversionEngineTest {
     @Test
+    void roomObservationOverflowFreezesMemoryAndJournalWritesUntilNewContext() throws Exception {
+        Harness h = new Harness();
+        var writes = new java.util.concurrent.atomic.AtomicInteger();
+        ConversionEngine e =
+                new ConversionEngine(
+                        h, h, h.gate::generation, s -> writes.incrementAndGet(), s -> {}, false);
+        e.connected(true);
+        e.on(new RoomReady(42));
+        for (int i = 1; i <= 100_001; i++) e.on(new Added(new ObjectId(i), BRONZE, Harness.TARGET));
+        assertEquals(State.UNCERTAIN, e.snapshot().state());
+        int atLimit = writes.get();
+        for (int i = 100_002; i <= 110_000; i++)
+            e.on(new Added(new ObjectId(i), BRONZE, Harness.TARGET));
+        assertEquals(atLimit, writes.get());
+        var field = ConversionEngine.class.getDeclaredField("seenAdds");
+        field.setAccessible(true);
+        assertEquals(100_000, ((java.util.Set<?>) field.get(e)).size());
+        e.acknowledge();
+        assertThrows(
+                IllegalStateException.class,
+                () -> e.start(Config.defaults(Mode.MANUAL_DROPS, 1, false)));
+        e.on(new RoomReady(43));
+        e.start(Config.defaults(Mode.MANUAL_DROPS, 1, false));
+        assertEquals(State.ARMED, e.snapshot().state());
+        assertTrue(h.sent.isEmpty());
+    }
+
+    @Test
     void interveningManualRunPreservesTheLearnedSameRoomDestination() {
         Harness h = new Harness();
         h.engine.on(Harness.inventory(80, 81, 82));
