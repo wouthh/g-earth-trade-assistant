@@ -1,0 +1,4 @@
+JSON-java 20251224
+https://github.com/stleary/JSON-java/blob/20251224/LICENSE
+
+Public Domain.
