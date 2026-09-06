@@ -12,6 +12,78 @@ import org.junit.jupiter.api.io.TempDir;
 
 class PurchaseAndStateTest {
     @Test
+    void ordinaryRestartsDoNotAccumulateArchives() throws Exception {
+        Harness h = new Harness();
+        for (int i = 0; i < 40; i++) {
+            try (LocalState store = new LocalState(temp)) {
+                assertFalse(store.needsReview());
+                store.save(h.engine.snapshot());
+            }
+        }
+        try (var files = Files.newDirectoryStream(temp, "previous-*.json")) {
+            assertFalse(files.iterator().hasNext());
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"corrupt", "unsupported"})
+    void unreadableOriginalBytesSurviveTheFirstLifecycleSave(String kind) throws Exception {
+        byte[] original =
+                kind.equals("corrupt")
+                        ? new byte[] {123, 34, 45, 56, 48, (byte) 255}
+                        : "{\"schema\":77,\"pending\":[-80]}"
+                                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Files.write(temp.resolve("journal.json"), original);
+        try (LocalState store = new LocalState(temp)) {
+            assertTrue(store.needsReview());
+            store.save(new Harness().engine.snapshot());
+        }
+        try (var files = Files.newDirectoryStream(temp, "previous-*.json")) {
+            var iterator = files.iterator();
+            assertTrue(iterator.hasNext());
+            assertArrayEquals(original, Files.readAllBytes(iterator.next()));
+            assertFalse(iterator.hasNext());
+        }
+    }
+
+    @Test
+    void oversizedOriginalIsNeverOverwritten() throws Exception {
+        byte[] original = new byte[1_000_001];
+        Files.write(temp.resolve("journal.json"), original);
+        try (LocalState store = new LocalState(temp)) {
+            assertTrue(store.needsReview());
+            assertThrows(IOException.class, () -> store.save(new Harness().engine.snapshot()));
+        }
+        assertArrayEquals(original, Files.readAllBytes(temp.resolve("journal.json")));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void archiveQuotaPreservesExistingEvidenceAndBlocksReplacement(boolean bytesLimit)
+            throws Exception {
+        int count = bytesLimit ? 1 : 32;
+        for (int i = 0; i < count; i++) {
+            Path archive = temp.resolve("previous-" + java.util.UUID.randomUUID() + ".json");
+            Files.writeString(archive, "existing evidence");
+            if (bytesLimit) {
+                try (var file = new java.io.RandomAccessFile(archive.toFile(), "rw")) {
+                    file.setLength(32_000_000);
+                }
+            }
+        }
+        Files.writeString(temp.resolve("journal.json"), "corrupt pending -80");
+        try (LocalState store = new LocalState(temp)) {
+            assertThrows(IOException.class, () -> store.save(new Harness().engine.snapshot()));
+        }
+        assertEquals("corrupt pending -80", Files.readString(temp.resolve("journal.json")));
+        try (var files = Files.list(temp)) {
+            assertEquals(
+                    count,
+                    files.filter(f -> f.getFileName().toString().startsWith("previous-")).count());
+        }
+    }
+
+    @Test
     void acknowledgementArchivesTheOriginalPendingIdentities() throws Exception {
         Harness h = new Harness();
         h.engine.start(Config.defaults(Mode.MANUAL_DROPS, 1, false));

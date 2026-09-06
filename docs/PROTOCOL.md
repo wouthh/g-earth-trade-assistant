@@ -51,3 +51,5 @@ For a future user-directed capture, record the current client revision, visible 
 `PurchasePhase` tests a bounded integer-budget policy through an abstract verified contract. Production has no such contract and never invokes a purchase send. Receipt types in those tests are simulated domain observations, not invented Origins wire messages. Purchasing cannot feed back into conversion.
 
 Worker overflow or an unexpected worker exception permanently cancels that process and requires restarting the extension. Dropped observations cannot be used as room context for a new run. Inventory storage is bounded across all observed pages; a rejected page leaves previous provenance intact.
+
+Recovery storage archives only unresolved evidence, with a 32-file/32-MB ceiling and no automatic evidence deletion. Corrupt originals are copied byte for byte before replacement; unarchivable originals block writes. Successful saves flush file contents and, on supported Java filesystem providers, the renamed directory entry before transport submission. Windows directory-channel limitations prevent claiming equivalent power-loss durability there.

@@ -8,6 +8,26 @@ import org.junit.jupiter.api.Test;
 
 class ConversionEngineTest {
     @Test
+    void interveningManualRunPreservesTheLearnedSameRoomDestination() {
+        Harness h = new Harness();
+        h.engine.on(Harness.inventory(80, 81, 82));
+        h.engine.start(Config.defaults(Mode.INVENTORY, 1, true));
+        h.drop(80);
+        h.advance(0);
+        h.confirm(h.sent.getLast());
+        h.engine.start(Config.defaults(Mode.MANUAL_DROPS, 1, true));
+        assertEquals(Harness.TARGET, h.engine.snapshot().target());
+        h.drop(81);
+        h.advance(0);
+        h.confirm(h.sent.getLast());
+        h.engine.start(Config.defaults(Mode.INVENTORY, 1, false));
+        h.advance(0);
+        assertEquals("place", h.sent.getLast().kind());
+        assertEquals(new Handle(-82), h.sent.getLast().handle());
+        assertEquals(Harness.TARGET, h.sent.getLast().target());
+    }
+
+    @Test
     void conflictAfterRedemptionPreventsAttributingTheRemoval() {
         Harness h = new Harness();
         h.engine.start(Config.defaults(Mode.MANUAL_DROPS, 1, false));

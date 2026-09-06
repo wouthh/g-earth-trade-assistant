@@ -12,6 +12,7 @@ This repository owns G-Earth Trade Assistant, a standalone Origins currency-furn
 - `protocol/` is the only native API and packet boundary. `runtime/` owns scheduling, the send cancellation fence and atomic local state. `ui/` owns Swing controls and immutable snapshots.
 - Listeners copy only relevant bounded packet bodies, enqueue facts, return packets unchanged and never wait for disk, timers or hotel responses. Swing reads/updates belong to its event-dispatch thread; persistence belongs to the worker.
 - Register listeners once, serialize sends, reserve actual observed instances, journal intent before transport, and confirm only matching observations. Never infer an ID sequence, ownership, credited delta, price or pagination from a name or timing.
+- Recovery archives contain only unresolved evidence and are capped at 32 files / 32 MB. Preserve unreadable originals before replacement; never silently prune evidence. Flush renamed journal entries and newly created directory ancestors on supported providers; document Windows directory-flush limitations.
 - Pause/Stop/context changes invalidate permits. No uncertain non-idempotent operation is replayed; persisted jobs never auto-resume. Keep every collection and scheduler bounded. Future trade/stall work needs its own scope and evidence.
 - The API source pin and exact reader patch are documented in `docs/PROTOCOL.md`; change them only with reproducible public source, byte tests and fake-host checks. No `systemPath`, local unpublished JAR, private implementation copy or installed-host patch is allowed.
 

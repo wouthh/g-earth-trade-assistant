@@ -133,7 +133,7 @@ public final class ConversionEngine {
         current = null;
         runFence = fence.getAsLong();
         state = cfg.mode() == Mode.MANUAL_DROPS || cfg.learnTarget() ? State.ARMED : State.RUNNING;
-        if (cfg.learnTarget()) target = null;
+        if (cfg.mode() == Mode.INVENTORY && cfg.learnTarget()) target = null;
         nextSend = clock.now();
         message =
                 cfg.mode() == Mode.MANUAL_DROPS
