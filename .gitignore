@@ -1,0 +1,13 @@
+.build/
+target/
+evidence/
+diagnostics/
+*.log
+.idea/
+.vscode/
+*.iml
+settings.json
+journal*.json
+*.jar
+*.zip
+*.tar.gz
