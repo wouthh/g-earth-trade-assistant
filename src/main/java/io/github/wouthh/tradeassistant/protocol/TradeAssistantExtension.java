@@ -158,6 +158,8 @@ public final class TradeAssistantExtension extends Extension implements AutoClos
 
     @Override
     public void initExtension() {
+        gate.invalidate();
+        runtime.execute(() -> engine.on(new ContextLost()));
         onClick();
     }
 
