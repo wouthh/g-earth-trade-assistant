@@ -37,7 +37,12 @@ class PackagedJarIT {
             assertEquals(
                     "io.github.wouthh.tradeassistant.protocol.TradeAssistantExtension",
                     archive.getManifest().getMainAttributes().getValue("Main-Class"));
+            assertNotNull(archive.getEntry("META-INF/LICENSE"));
+            assertNotNull(archive.getEntry("META-INF/THIRD-PARTY-NOTICES.md"));
+            assertNotNull(archive.getEntry("META-INF/APACHE-LICENSE-2.0.txt"));
             assertNotNull(archive.getEntry("META-INF/licenses/G-Earth-MIT.txt"));
+            assertNotNull(archive.getEntry("META-INF/licenses/SLF4J-LICENSE.txt"));
+            assertNotNull(archive.getEntry("META-INF/licenses/JSON-java-LICENSE.txt"));
         }
         Process process = launch("--demo");
         try {
