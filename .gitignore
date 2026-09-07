@@ -11,3 +11,5 @@ journal*.json
 *.jar
 *.zip
 *.tar.gz
+__pycache__/
+*.pyc

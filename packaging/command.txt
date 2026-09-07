@@ -1,0 +1,1 @@
+["C:\\G-Earth\\jre\\bin\\java.exe","-jar","G-Earth-Trade-Assistant.jar","-p","{port}","-f","{filename}","-c","{cookie}"]

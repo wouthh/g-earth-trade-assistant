@@ -1,0 +1,40 @@
+name: Verify extension
+on:
+  push:
+    branches: [main, 'feat/**', 'fix/**']
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Audit and package the author's exact head, not GitHub's synthetic merge identity.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build pinned public API
+        run: python3 scripts/bootstrap.py
+      - name: Verify and package without account access
+        run: ./mvnw -B clean verify
+      - name: Audit public source
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_*.py'
+          python3 scripts/check-public.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: g-earth-trade-assistant
+          path: |
+            target/g-earth-trade-assistant-0.1.0.jar
+            target/G-Earth-Trade-Assistant-0.1.0-extension.zip
+          if-no-files-found: error
+          retention-days: 14
