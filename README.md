@@ -37,7 +37,7 @@ Artifacts:
 
 Targets Origins Shockwave/WEDGIE and the native G-Earth extension socket, with API revision `b993d5ba0b23ab5644633abb8074229d1cb53b71`. Discovery checked a beta-28 Java 17 G-Earth host with a separate Java 21 extension runtime. The packaged fake-host handshake and protocol tests prove offline compatibility; a real-host/account smoke test remains a user-controlled step.
 
-1. Build/download and extract the complete ZIP. Its top-level folder contains `command.txt` and `G-Earth-Trade-Assistant.jar`.
+1. Build/download and extract the complete ZIP. Its top-level folder contains `command.txt` and an `extension/` subdirectory containing `G-Earth-Trade-Assistant.jar`. Keep this layout: G-Earth uses `extension/` as the process working directory.
 2. When you choose to load it, place that whole folder directly inside the intended G-Earth `Extensions` directory. G-Earth can automatically launch direct child folders; the extension itself always starts disarmed. Do not install while another account-sensitive session is active unless you deliberately choose that timing.
 3. The supplied Bottles launcher explicitly selects `C:\G-Earth\jre\bin\java.exe` because the discovered host's ordinary `java` launcher selects Java 17. For another installation, edit only the executable path in `command.txt` to a verified Java 21+ runtime. Preserve `{port}`, `{filename}` and `{cookie}` exactly; never publish expanded authentication arguments.
 4. Restart/reload G-Earth at a time you choose. Open **G-Earth Trade Assistant** through the extension's double-click/green button.

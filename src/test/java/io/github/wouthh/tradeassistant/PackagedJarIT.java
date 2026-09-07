@@ -63,7 +63,58 @@ class PackagedJarIT {
             assertTrue(text.contains("{cookie}"));
             assertTrue(text.contains("jre"));
             assertNotNull(
-                    zip.getEntry("G-Earth-Trade-Assistant-0.1.0/G-Earth-Trade-Assistant.jar"));
+                    zip.getEntry(
+                            "G-Earth-Trade-Assistant-0.1.0/extension/G-Earth-Trade-Assistant.jar"));
+        }
+    }
+
+    @Test
+    void extractedFolderLaunchesFromTheHostsExtensionWorkingDirectory() throws Exception {
+        Path extracted = temp.resolve("extracted");
+        try (ZipFile zip = new ZipFile("target/G-Earth-Trade-Assistant-0.1.0-extension.zip")) {
+            for (var entry : java.util.Collections.list(zip.entries())) {
+                Path destination = extracted.resolve(entry.getName()).normalize();
+                assertTrue(destination.startsWith(extracted));
+                if (entry.isDirectory()) {
+                    Files.createDirectories(destination);
+                } else {
+                    Files.createDirectories(destination.getParent());
+                    try (var input = zip.getInputStream(entry)) {
+                        Files.copy(input, destination);
+                    }
+                }
+            }
+        }
+        Path folder = extracted.resolve("G-Earth-Trade-Assistant-0.1.0");
+        var command = new org.json.JSONArray(Files.readString(folder.resolve("command.txt")));
+        assertEquals("C:\\G-Earth\\jre\\bin\\java.exe", command.getString(0));
+        var args = new java.util.ArrayList<String>();
+        args.add(Path.of(System.getProperty("java.home"), "bin", "java").toString());
+        args.add("-Djava.awt.headless=true");
+        args.add("-Dtradeassistant.stateDir=" + temp.resolve("state"));
+        for (int i = 1; i < command.length(); i++) {
+            args.add(
+                    command.getString(i)
+                            .replace("{port}", "1")
+                            .replace("{filename}", "fixture")
+                            .replace("{cookie}", "synthetic-cookie"));
+        }
+        args.add("--demo");
+        Process process =
+                new ProcessBuilder(args)
+                        .directory(folder.resolve("extension").toFile())
+                        .redirectErrorStream(true)
+                        .redirectOutput(temp.resolve("folder-demo.log").toFile())
+                        .start();
+        try {
+            assertTrue(process.waitFor(10, TimeUnit.SECONDS));
+            assertEquals(0, process.exitValue(), Files.readString(temp.resolve("folder-demo.log")));
+            assertTrue(
+                    Files.readString(temp.resolve("folder-demo.log"))
+                            .contains("OFFLINE DEMO PASS"));
+            assertFalse(Files.exists(temp.resolve("state")));
+        } finally {
+            process.destroyForcibly();
         }
     }
 

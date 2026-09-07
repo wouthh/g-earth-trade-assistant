@@ -7,7 +7,7 @@
   <files>
     <file>
       <source>${project.build.directory}/${project.build.finalName}.jar</source>
-      <outputDirectory>/</outputDirectory>
+      <outputDirectory>extension</outputDirectory>
       <destName>G-Earth-Trade-Assistant.jar</destName>
     </file>
     <file>
