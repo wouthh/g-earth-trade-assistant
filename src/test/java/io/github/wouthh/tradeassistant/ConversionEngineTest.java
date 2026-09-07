@@ -8,6 +8,110 @@ import org.junit.jupiter.api.Test;
 
 class ConversionEngineTest {
     @Test
+    void pauseWhilePersistingPlacementReleasesTheUnsentReservationBeforeResume() {
+        cancelledPlacementCanContinue(false, false);
+    }
+
+    @Test
+    void pauseAtTheTransportGateReleasesTheUnsentReservationBeforeResume() {
+        cancelledPlacementCanContinue(true, false);
+    }
+
+    @Test
+    void stopAfterCancelledPlacementCanStartANewExplicitRun() {
+        cancelledPlacementCanContinue(false, true);
+    }
+
+    private void cancelledPlacementCanContinue(boolean atTransport, boolean stop) {
+        Harness h = new Harness();
+        var cancelOnce = new java.util.concurrent.atomic.AtomicBoolean(!atTransport);
+        ConversionEngine e =
+                new ConversionEngine(
+                        h,
+                        h,
+                        h.gate::generation,
+                        snapshot -> {
+                            h.journal.add(snapshot);
+                            if ("PLACEMENT_OBSERVED_OR_INTENDED"
+                                            .equals(snapshot.operations().get(-81))
+                                    && cancelOnce.getAndSet(false)) h.gate.invalidate();
+                        },
+                        snapshot -> {},
+                        false);
+        e.connected(true);
+        e.on(new RoomReady(42));
+        e.on(Harness.inventory(80, 81));
+        e.start(Config.defaults(Mode.INVENTORY, 2, true));
+        e.on(new Placement(new Handle(-80), Harness.TARGET));
+        e.on(new StripRemoval(new Handle(-80)));
+        e.on(new Added(new ObjectId(80), BRONZE, Harness.TARGET));
+        h.advance(0);
+        e.on(new Removed(new ObjectId(80)));
+        h.cancelPlace = atTransport;
+        h.advance(1500);
+        assertEquals(1, h.sent.size(), "Only the seed redemption was submitted");
+        assertEquals(1, e.snapshot().available());
+        assertEquals(1, e.snapshot().observed());
+        assertFalse(e.snapshot().pendingHandles().contains(-81));
+        assertFalse(h.journal.getLast().operations().containsKey(-81));
+        if (stop) {
+            e.stop();
+            e.start(Config.defaults(Mode.INVENTORY, 1, false));
+        } else {
+            e.pause();
+            assertEquals(State.PAUSED, e.snapshot().state());
+            e.resume();
+        }
+        h.advance(0);
+        assertEquals(2, h.sent.size());
+        assertEquals("place", h.sent.getLast().kind());
+        assertEquals(new Handle(-81), h.sent.getLast().handle());
+        e.on(new StripRemoval(new Handle(-81)));
+        e.on(new Added(new ObjectId(81), BRONZE, Harness.TARGET));
+        h.advance(1500);
+        assertEquals("redeem", h.sent.getLast().kind());
+        e.on(new Removed(new ObjectId(81)));
+        assertEquals(State.COMPLETE, e.snapshot().state());
+        assertEquals(stop ? 1 : 2, e.snapshot().redeemed());
+        assertEquals(0, e.snapshot().uncertain());
+    }
+
+    @Test
+    void resumeAfterCancelledRedemptionUsesOnlyTheAlreadyPlacedObject() {
+        Harness h = new Harness();
+        var cancelOnce = new java.util.concurrent.atomic.AtomicBoolean(true);
+        ConversionEngine e =
+                new ConversionEngine(
+                        h,
+                        h,
+                        h.gate::generation,
+                        snapshot -> {
+                            h.journal.add(snapshot);
+                            if (snapshot.operations().containsValue("REDEMPTION_INTENT")
+                                    && cancelOnce.getAndSet(false)) h.gate.invalidate();
+                        },
+                        snapshot -> {},
+                        false);
+        e.connected(true);
+        e.on(new RoomReady(42));
+        e.start(Config.defaults(Mode.MANUAL_DROPS, 1, false));
+        e.on(new Placement(new Handle(-80), Harness.TARGET));
+        e.on(new StripRemoval(new Handle(-80)));
+        e.on(new Added(new ObjectId(80), BRONZE, Harness.TARGET));
+        h.advance(0);
+        assertTrue(h.sent.isEmpty());
+        assertEquals("PLACEMENT_CONFIRMED", h.journal.getLast().operations().get(-80));
+        e.pause();
+        e.resume();
+        h.advance(0);
+        assertEquals(1, h.sent.size());
+        assertEquals("redeem", h.sent.getFirst().kind());
+        e.on(new Removed(new ObjectId(80)));
+        assertEquals(State.COMPLETE, e.snapshot().state());
+        assertEquals(1, e.snapshot().redeemed());
+    }
+
+    @Test
     void roomObservationOverflowFreezesMemoryAndJournalWritesUntilNewContext() throws Exception {
         Harness h = new Harness();
         var writes = new java.util.concurrent.atomic.AtomicInteger();

@@ -19,6 +19,7 @@ Requirements: a **full JDK 21+** supporting `--release 21`, Python 3.12+, networ
 ```sh
 python3 scripts/bootstrap.py
 ./mvnw clean verify
+python3 -m unittest discover -s scripts -p 'test_*.py'
 python3 scripts/check-public.py
 java -jar target/g-earth-trade-assistant-0.1.0.jar --demo
 ```
@@ -53,7 +54,7 @@ For inventory conversion, manually load pages containing the bronze stack. The d
 
 Defaults are quantity 1, at least 1,500 ms between automation submissions, and a 15-second outcome timeout. Counts are bounded to 1–1,000 and pending correlations to 128. These are engineering defaults, not platform-approved limits. Insufficient observed inventory causes an honest partial stop.
 
-**Pause** and **Stop** invalidate pending sends immediately; a write already committed to transport may finish and remains subject to reconciliation. Pause needs explicit Resume. Stop never sends cleanup or rollback packets. Closing the window also stops automation. Disconnect, room changes and uncertain outcomes never automatically resume.
+**Pause** and **Stop** serialize cancellation with the local transport write. Cancellation may wait for a write already in progress; after it returns, no stale submission can begin. Sent operations remain subject to reconciliation. A definitively unsent placement releases its reservation, and Resume can use that observed instance; an unknown submission is never replayed. Pause needs explicit Resume. Stop never sends cleanup or rollback packets. Closing the window also stops automation. Disconnect, room changes and uncertain outcomes never automatically resume.
 
 “Redeemed/removal confirmed” means the exact pending object's removal was observed. Balance is displayed separately as an absolute observation. Credited proceeds remain unverified, even after a matching removal; unrelated balances cannot complete a redemption. Exactly-once delivery is not guaranteed by this protocol.
 

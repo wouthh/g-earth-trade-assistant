@@ -139,6 +139,8 @@ public final class Model {
 
     public enum Submission {
         SUBMITTED,
+        /** The local write was never invoked; safe to release an unsent reservation. */
+        CANCELLED,
         UNKNOWN
     }
 

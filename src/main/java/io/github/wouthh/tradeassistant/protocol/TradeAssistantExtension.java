@@ -83,15 +83,20 @@ public final class TradeAssistantExtension extends Extension implements AutoClos
 
     private Submission inject(
             Binding binding, long permit, java.util.function.IntFunction<HPacket> packet) {
+        PacketBindings current = bindings;
+        if (closed.get() || current == null) return Submission.CANCELLED;
+        final HPacket composed;
+        try {
+            composed = packet.apply(current.id(binding));
+        } catch (RuntimeException e) {
+            return Submission.UNKNOWN;
+        }
         return gate.submit(
                 permit,
                 () -> {
-                    PacketBindings current = bindings;
-                    if (closed.get() || current == null) return Submission.UNKNOWN;
+                    if (closed.get() || bindings != current) return Submission.CANCELLED;
                     try {
-                        return sendToServer(packet.apply(current.id(binding)))
-                                ? Submission.SUBMITTED
-                                : Submission.UNKNOWN;
+                        return sendToServer(composed) ? Submission.SUBMITTED : Submission.UNKNOWN;
                     } catch (RuntimeException e) {
                         return Submission.UNKNOWN;
                     }

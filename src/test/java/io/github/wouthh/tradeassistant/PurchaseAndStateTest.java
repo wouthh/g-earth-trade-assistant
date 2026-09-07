@@ -247,7 +247,7 @@ class PurchaseAndStateTest {
         long permit = gate.generation();
         gate.invalidate();
         assertEquals(
-                Submission.UNKNOWN,
+                Submission.CANCELLED,
                 gate.submit(
                         permit,
                         () -> {

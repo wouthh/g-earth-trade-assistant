@@ -449,10 +449,24 @@ public final class ConversionEngine {
         drops.put(handle, d);
         used.add(handle.value());
         observed++;
-        inventory.removed(handle);
         message = "Placement intent recorded.";
-        if (!persist() || !validFence()) return;
-        if (transport.place(handle, target, runFence) != Submission.SUBMITTED) {
+        if (!persist()) return;
+        Submission outcome =
+                validFence() ? transport.place(handle, target, runFence) : Submission.CANCELLED;
+        if (outcome == Submission.CANCELLED) {
+            // No local write occurred: release only this reservation, never a server tombstone.
+            drops.remove(handle, d);
+            current = null;
+            used.remove(handle.value());
+            observed--;
+            message =
+                    "Placement cancelled before submission; the observed instance remains available.";
+            persist();
+            publish();
+            return;
+        }
+        inventory.removed(handle);
+        if (outcome != Submission.SUBMITTED) {
             halt("Placement submission uncertain; no retry.");
             return;
         }
@@ -465,8 +479,19 @@ public final class ConversionEngine {
         if (d == null || d.redeemSent || d.completed || !d.added || !d.removed) return;
         d.redeemIntent = true;
         message = "Redemption intent recorded; awaiting exact object removal.";
-        if (!persist() || !validFence()) return;
-        if (transport.redeem(d.handle.expectedObject(), runFence) != Submission.SUBMITTED) {
+        if (!persist()) return;
+        Submission outcome =
+                validFence()
+                        ? transport.redeem(d.handle.expectedObject(), runFence)
+                        : Submission.CANCELLED;
+        if (outcome == Submission.CANCELLED) {
+            d.redeemIntent = false;
+            message = "Redemption cancelled before submission; the placed object remains observed.";
+            persist();
+            publish();
+            return;
+        }
+        if (outcome != Submission.SUBMITTED) {
             halt("Redemption submission uncertain; no retry.");
             return;
         }

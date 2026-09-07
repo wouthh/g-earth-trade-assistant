@@ -19,7 +19,7 @@ final class Harness implements Scheduler, Transport {
     final SafetyGate gate = new SafetyGate();
     final ConversionEngine engine;
     long time, serial;
-    boolean reject, reflect;
+    boolean reject, reflect, cancelPlace;
 
     Harness() {
         engine = new ConversionEngine(this, this, gate::generation, journal::add, s -> {}, false);
@@ -48,6 +48,10 @@ final class Harness implements Scheduler, Transport {
     }
 
     public Submission place(Handle h, Target t, long permit) {
+        if (cancelPlace) {
+            cancelPlace = false;
+            gate.invalidate();
+        }
         return gate.submit(
                 permit,
                 () -> {
