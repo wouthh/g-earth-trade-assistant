@@ -20,7 +20,7 @@ This repository owns G-Earth Trade Assistant, a standalone Origins currency-furn
 ## Validation and privacy
 
 - Full JDK 21+, Python 3.12+, Maven Wrapper, JUnit 5. Bootstrap: `python3 scripts/bootstrap.py`. Full canonical gate: `./mvnw clean verify`; it includes format, unit and packaged fake-host/ZIP checks. Focused regressions: `./mvnw -Dtest=ConversionEngineTest,OriginsCodecTest test`.
-- Privacy/history gate: `python3 scripts/check-public.py` plus manual staged/history review and `git diff --check`. Network-free artifact smoke: `java -jar target/g-earth-trade-assistant-0.1.0.jar --demo`. CI mirrors the same headless gate and publishes artifacts. Private evidence validation is local-only through the opt-in `privateEvidence` property; standard CI intentionally skips it.
+- Privacy/history gate: `python3 -m unittest discover -s scripts -p 'test_*.py'` and `python3 scripts/check-public.py` (public author emails; GitHub’s exact server merge committer is allowed) plus manual staged/history review and `git diff --check`. Network-free artifact smoke: `java -jar target/g-earth-trade-assistant-0.1.0.jar --demo`. CI mirrors the same headless gate and publishes artifacts. Private evidence validation is local-only through the opt-in `privateEvidence` property; standard CI intentionally skips it.
 - Tests use fixtures, fake transport and isolated temporary state. Never redeem, buy, trade, log in, or contact a hotel during tests.
 - Keep private captures, credentials, authentication arguments, logs, journals, settings, generated binaries, Maven caches and upstream checkouts out of every published commit.
 - Preserve unexplained working-tree changes; never reset, stash, clean, rebase, amend or force-push to fit the workflow.
