@@ -48,3 +48,13 @@ Delivery state retains at most eight verified operation generations under one
 stable target/host/lock binding; preserve and refuse unknown or altered rollback
 evidence. Follow `docs/DELIVERY.md` for capacity, installed-JAR version checks,
 and crash-retry durability. Never prune retained generations automatically.
+
+Managed delivery binds the host, Extensions parent, target and all managed entries
+to the same real/effective user used for lock and stopped-Java inspection. Run as
+the host owner. Recovery uses only deterministic, bounded pending-write names:
+one scope bootstrap, one receipt update or one staged member at a time. Pending
+bytes must be exact prefixes of the operation's trusted payload; unrelated or
+altered files are preserved and refused. Member temporaries stay outside images.
+Scope publication cannot replace another binding. Immutable generation identities
+include both inventories; retry and rollback never infer authority from a temporary
+file. Test abrupt-write leftovers and retained-receipt tampering with synthetic data.

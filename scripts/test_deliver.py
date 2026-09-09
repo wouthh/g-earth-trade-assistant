@@ -127,6 +127,7 @@ class ExchangeTests(PackageTests):
             with self.assertRaisesRegex(d.Refused, 'JAR version differs'): self.run_delivery(preview=preview)
         self.assertFalse(self.state.exists())
 
+    @unittest.skipIf(hasattr(os, "getuid") and os.getuid() == 0, "root bypasses discretionary mode denials")
     def test_unwritable_target_parent_rejects_preview_and_execution(self):
         self.target.parent.chmod(0o500)
         try:
@@ -339,6 +340,58 @@ class ExchangeTests(PackageTests):
         for preview in [True, False]:
             with self.assertRaises(d.Refused): self.run_delivery(undo=True, preview=preview)
         self.assertEqual(d.inventory(self.target), current)
+
+    def test_interrupted_named_writes_resume_without_deleting_evidence(self):
+        real = d.write_pending
+        # Each interruption leaves a real partial file, as an abrupt process exit would.
+        for category in ('scope', 'initial', 'member', 'final'):
+            hit = []
+            def interrupt(path, data, temporary):
+                is_scope = path.name == '.scope.json'
+                is_receipt = path.suffix == '.json' and not is_scope
+                value = json.loads(data) if is_receipt else {}
+                matches = ((category == 'scope' and is_scope) or
+                    (category == 'initial' and is_receipt and value.get('state') in ('prepared', 'preparing')) or
+                    (category == 'member' and '.member-' in temporary.name) or
+                    (category == 'final' and is_receipt and value.get('state') in ('original_retained', 'installed')))
+                if matches and not hit:
+                    temporary.write_bytes(data[:max(1, len(data)//2)]); temporary.chmod(0o600)
+                    hit.append(temporary)
+                    raise OSError('synthetic abrupt write interruption')
+                return real(path, data, temporary)
+            with patch.object(d, 'write_pending', side_effect=interrupt):
+                with self.assertRaises(OSError): self.run_delivery()
+            self.assertTrue(hit[0].exists())
+            # Continue until the next selected boundary; each category uses the same operation.
+            if category == 'final': self.run_delivery()
+        self.assertFalse(list(self.state.glob('*.pending')))
+
+    def test_foreign_pending_bytes_are_preserved(self):
+        self.state.mkdir(mode=0o700)
+        name = d.scope_temporary(self.desc)
+        pending = self.state / name; pending.write_bytes(b'foreign bytes'); pending.chmod(0o600)
+        with self.assertRaises(d.Refused): self.run_delivery()
+        self.assertEqual(pending.read_bytes(), b'foreign bytes')
+        self.assertEqual(d.inventory(self.target), self.before)
+
+    def test_noncurrent_retained_inputs_cannot_change_behind_identity(self):
+        result = self.run_delivery(); path = Path(result['receipt'])
+        original = json.loads(path.read_text())
+        for field in ('source_revision', 'package_sha256'):
+            changed = json.loads(json.dumps(original))
+            changed['manifest'][field] = 'e' * (40 if field == 'source_revision' else 64)
+            path.write_bytes(d.json_bytes(changed))
+            with self.assertRaisesRegex(d.Refused, 'identity differs'):
+                d.retention_preflight(self.state, self.desc, 'f' * 64)
+        path.write_bytes(d.json_bytes(original))
+
+    def test_pending_hardlink_does_not_modify_unrelated_file(self):
+        self.state.mkdir(mode=0o700)
+        unrelated = self.root / 'unrelated-empty'; unrelated.touch(mode=0o600)
+        pending = self.state / d.scope_temporary(self.desc); os.link(unrelated, pending)
+        with self.assertRaisesRegex(d.Refused, 'hardlink refused'): self.run_delivery()
+        self.assertEqual(unrelated.read_bytes(), b'')
+        self.assertEqual(pending.stat().st_ino, unrelated.stat().st_ino)
 
 
 if __name__ == '__main__': unittest.main()

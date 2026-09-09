@@ -102,3 +102,13 @@ binds the directory to one target, host path and lock set. A ninth new generatio
 is refused without pruning; existing-generation retry/rollback still works.
 Unknown files and incomplete scope records are preserved and refused. Reconcile
 old generations explicitly before consuming another slot.
+
+Managed delivery binds the host, Extensions parent, target and all managed entries
+to the same real/effective user used for lock and stopped-Java inspection. Run as
+the host owner. Recovery uses only deterministic, bounded pending-write names:
+one scope bootstrap, one receipt update or one staged member at a time. Pending
+bytes must be exact prefixes of the operation's trusted payload; unrelated or
+altered files are preserved and refused. Member temporaries stay outside images.
+Scope publication cannot replace another binding. Immutable generation identities
+include both inventories; retry and rollback never infer authority from a temporary
+file. Test abrupt-write leftovers and retained-receipt tampering with synthetic data.

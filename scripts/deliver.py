@@ -16,7 +16,6 @@ from pathlib import Path, PurePosixPath
 import re
 import stat
 import sys
-import tempfile
 import zipfile
 import zlib
 
@@ -74,14 +73,49 @@ def sync_dir(path):
         os.close(fd)
 
 
+def read_temporary(path, candidates):
+    regular(path, True); info = path.stat()
+    check(info.st_size <= min(LIMIT, max(map(len, candidates))), 'pending write budget exceeded')
+    data = path.read_bytes()
+    if info.st_nlink != 1:
+        binding = path.parent / '.scope.json'
+        check(path.name.startswith('.scope-') and info.st_nlink == 2 and binding.exists(), 'pending hardlink refused')
+        regular(binding, True); other = binding.stat()
+        check((info.st_dev, info.st_ino) == (other.st_dev, other.st_ino)
+              and data in candidates, 'pending scope link pair differs')
+    check(any(candidate.startswith(data) for candidate in candidates), 'pending write contents differ')
+    return data
+
+
+def write_pending(path, data, temporary):
+    regular(path); regular(temporary)
+    prefix = b""
+    if temporary.exists(): prefix = read_temporary(temporary, [data])
+    check(data.startswith(prefix), 'pending write contents differ')
+    with temporary.open('ab' if temporary.exists() else 'xb') as stream:
+        os.fchmod(stream.fileno(), 0o600)
+        stream.write(data[len(prefix):]); stream.flush(); os.fsync(stream.fileno())
+    if path.name == '.scope.json':
+        try: os.link(temporary, path)
+        except FileExistsError:
+            check(load_private(path) == json.loads(data), 'scope changed during publication')
+        sync_dir(path.parent)
+        temporary.unlink()
+    else: os.replace(temporary, path)
+    sync_dir(path.parent)
+    if temporary.parent != path.parent: sync_dir(temporary.parent)
+
+
 def save(path, value):
-    fd, temporary = tempfile.mkstemp(prefix='.receipt-', dir=path.parent)
-    try:
-        with os.fdopen(fd, 'wb') as stream:
-            stream.write(json_bytes(value)); stream.flush(); os.fsync(stream.fileno())
-        os.replace(temporary, path); sync_dir(path.parent)
-    finally:
-        if os.path.exists(temporary): os.unlink(temporary)
+    write_pending(path, json_bytes(value), path.with_name(path.name + '.pending'))
+
+
+def scope_temporary(descriptor):
+    return '.scope-' + sha(json_bytes(state_scope(descriptor))) + '.pending'
+
+
+def member_temporary(slot, name):
+    return slot.parent / (slot.name + '.member-' + sha(name.encode()) + '.pending')
 
 
 def state_scope(descriptor):
@@ -89,13 +123,19 @@ def state_scope(descriptor):
             for key in ('target', 'host_executable', 'locks')}
 
 
-def retention_preflight(directory, descriptor, identity):
+def retention_preflight(directory, descriptor, identity, pending_values=None):
     if not directory.exists(): return
+    pending_values = pending_values or {}
     names = []
     with os.scandir(directory) as children:
         for child in children:
             names.append(child.name)
-            check(len(names) <= 17, 'retained state entry capacity exceeded')
+            check(len(names) <= 18, 'retained state entry capacity exceeded')
+    check(sum(name in pending_values for name in names) <= 1, "multiple pending writes refused")
+    for name in list(names):
+        if name in pending_values:
+            read_temporary(directory / name, pending_values[name])
+            names.remove(name)
     if names:
         check('.scope.json' in names and load_private(directory / '.scope.json') == state_scope(descriptor),
               'retained state scope or host locks differ')
@@ -112,6 +152,10 @@ def retention_preflight(directory, descriptor, identity):
         receipt = load_private(directory / (generation + '.json'))
         check(receipt.get('identity') == generation and receipt.get('state') in ('preparing', 'installed', 'rolling_back', 'rolled_back'),
               'invalid retained generation receipt')
+        check(isinstance(receipt.get('descriptor'), dict)
+              and sha(json_bytes([receipt['descriptor'], receipt.get('manifest'), receipt.get('before'), receipt.get('after')])) == generation
+              and receipt.get('before') == receipt['descriptor'].get('expected_files')
+              and state_scope(receipt['descriptor']) == state_scope(descriptor), 'retained generation identity differs')
         manifest = receipt.get('manifest')
         check(isinstance(manifest, dict) and manifest.get('schema') == 1 and manifest.get('component') == 'g-earth-trade-assistant'
               and isinstance(manifest.get('source_revision'), str) and REVISION.fullmatch(manifest['source_revision'])
@@ -135,10 +179,8 @@ def retention_preflight(directory, descriptor, identity):
 
 def bind_retention_scope(directory, descriptor):
     path = directory / '.scope.json'
-    if not path.exists():
-        with path.open('xb') as stream:
-            os.fchmod(stream.fileno(), 0o600)
-            stream.write(json_bytes(state_scope(descriptor))); stream.flush(); os.fsync(stream.fileno())
+    if not path.exists() or (directory / scope_temporary(descriptor)).exists():
+        write_pending(path, json_bytes(state_scope(descriptor)), directory / scope_temporary(descriptor))
     check(load_private(path) == state_scope(descriptor), 'retained state scope or host locks differ')
     with path.open('rb') as stream: os.fsync(stream.fileno())
     sync_dir(directory)
@@ -146,10 +188,11 @@ def bind_retention_scope(directory, descriptor):
 
 def inventory(root, partial=False):
     root = regular(root)
-    check(root.is_dir(), 'mapped extension directory missing')
+    check(root.is_dir() and root.stat().st_uid == os.getuid(), 'mapped extension missing or owned by another user')
     values = {}; size = 0
     for file in root.rglob('*'):
         name = file.relative_to(root).as_posix()
+        check(file.lstat().st_uid == os.getuid(), 'extension entry owned by another user')
         check(not file.is_symlink(), 'extension symlink refused')
         if file.is_dir():
             check(name == 'extension', 'unknown extension directory')
@@ -257,6 +300,8 @@ def writer_locks(paths):
 
 
 def deliver(descriptor_path, package, checksum, revision, *, preview=False, undo=False, stopped=no_java):
+    check(sys.platform.startswith("linux"), "managed installation requires Linux")
+    check(os.getuid() == os.geteuid(), "real and effective installation user must match")
     descriptor = load_private(descriptor_path)
     check(descriptor.get('schema') == 1 and descriptor.get('component') == 'g-earth-trade-assistant', 'wrong descriptor component')
     target = regular(descriptor['target']); state = regular(descriptor['receipt_directory'])
@@ -264,6 +309,7 @@ def deliver(descriptor_path, package, checksum, revision, *, preview=False, undo
     check(not state.is_relative_to(target.parent) and not target.is_relative_to(state), 'receipt/target overlap')
     host = regular(descriptor['host_executable'])
     check(host.is_file() and host.stat().st_size <= LIMIT and host.parent == target.parent.parent and sha(host.read_bytes()) == descriptor['host_sha256'], 'host identity differs')
+    check(all(p.stat().st_uid == os.getuid() for p in (host, host.parent, target.parent, target)), 'host and target must belong to the inspected user')
     locks = descriptor['locks']
     check(isinstance(locks, list) and 1 <= len(locks) <= 4 and len(set(locks)) == len(locks), 'existing host locks required')
     check(all(not Path(p).is_relative_to(target) for p in [descriptor_path, package, *locks]),
@@ -279,7 +325,7 @@ def deliver(descriptor_path, package, checksum, revision, *, preview=False, undo
     if command[0] != java:
         command[0] = java; payload['command.txt'] = json_bytes(command)
     after = {name: sha(data) for name, data in payload.items()}
-    identity = sha(json_bytes([descriptor, manifest]))
+    identity = sha(json_bytes([descriptor, manifest, before, after]))
     receipt_path = state / (identity + '.json'); slot = state / (identity + '.retained')
     with writer_locks(locks):
         stopped(); check(load_private(descriptor_path) == descriptor, 'descriptor changed under lock')
@@ -297,14 +343,18 @@ def deliver(descriptor_path, package, checksum, revision, *, preview=False, undo
         if receipt is None:
             check(not undo and not slot.exists() and inventory(target) == before, 'unowned or changed installation')
             verify_jar((target / 'extension/G-Earth-Trade-Assistant.jar').read_bytes(), old_version)
-            if before == after:
-                return {'state': 'preview' if preview else 'unchanged', 'manifest': manifest,
-                        'installed_files': after, 'loaded': False, 'rollback': 'existing installation was not changed'}
-            receipt = {'identity': identity, 'manifest': manifest, 'before': before, 'after': after, 'state': 'preparing'}
-        check(receipt.get('identity') == identity and receipt.get('manifest') == manifest
+            receipt = {'identity': identity, 'descriptor': descriptor, 'manifest': manifest, 'before': before, 'after': after, 'state': 'preparing'}
+        check(receipt.get('identity') == identity and receipt.get('descriptor') == descriptor and receipt.get('manifest') == manifest
               and receipt.get('before') == before and receipt.get('after') == after
               and receipt.get('state') in ('preparing', 'installed', 'rolling_back', 'rolled_back'), 'receipt mismatch')
-        retention_preflight(state, descriptor, identity)
+        pending = {scope_temporary(descriptor): [json_bytes(state_scope(descriptor))],
+                   identity + '.json.pending': [json_bytes(dict(receipt, state=value))
+                       for value in ('preparing', 'installed', 'rolling_back', 'rolled_back')]}
+        pending.update({member_temporary(slot, name).name: [data] for name, data in payload.items()})
+        retention_preflight(state, descriptor, identity, pending)
+        if not receipt_path.exists() and before == after:
+            return {'state': 'preview' if preview else 'unchanged', 'manifest': manifest,
+                    'installed_files': after, 'loaded': False, 'rollback': 'existing installation was not changed'}
         current = inventory(target); retained = inventory(slot, partial=True) if slot.exists() else None
         original = target if current == before else slot
         check(inventory(original) == before, 'original installation identity differs')
@@ -342,13 +392,7 @@ def deliver(descriptor_path, package, checksum, revision, *, preview=False, undo
             for name, data in payload.items():
                 path = slot / name
                 if path.exists(): continue
-                fd, temporary = tempfile.mkstemp(prefix='.member-', dir=path.parent)
-                try:
-                    with os.fdopen(fd, 'wb') as stream:
-                        stream.write(data); stream.flush(); os.fsync(stream.fileno())
-                    os.rename(temporary, path); sync_dir(path.parent)
-                finally:
-                    if os.path.exists(temporary): os.unlink(temporary)
+                write_pending(path, data, member_temporary(slot, name))
             sync_dir(slot / 'extension'); sync_dir(slot); sync_dir(state)
             stopped(); check(inventory(target) == before and inventory(slot) == after, 'activation inputs drifted')
             exchange(target, slot)
