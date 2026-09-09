@@ -237,9 +237,9 @@ def verify_java_runtime(descriptor, host):
         check(drive is not None, 'Wine Java drive is not mapped by the host')
         executable = drive
         for part in raw[1:]:
-            check(sum(child.name.casefold() == part.casefold() for child in executable.iterdir()) == 1,
-                  'ambiguous or missing Wine Java path component')
-            executable = executable / part
+            matches = [child for child in executable.iterdir() if child.name.casefold() == part.casefold()]
+            check(len(matches) == 1, 'ambiguous or missing Wine Java path component')
+            executable = matches[0]
 
         signature = b'MZ'
     release = executable.parent.parent / 'release'
@@ -276,6 +276,11 @@ def verify_java_runtime(descriptor, host):
     check(len(versions) == 1 and re.fullmatch(r'21(?:\.[0-9]+)*(?:[+_-][A-Za-z0-9.+_-]+)?', versions[0]),
           'attested runtime is not Java 21')
     return command
+
+
+def verify_managed_launcher(data, descriptor):
+    expected = [descriptor['java_executable'], '-jar', 'G-Earth-Trade-Assistant.jar', '-p', '{port}', '-f', '{filename}', '-c', '{cookie}']
+    check(json.loads(data) == expected, 'managed launcher does not match attested Java and placeholders')
 
 
 def read_package(path, checksum, revision):
@@ -420,6 +425,7 @@ def deliver(descriptor_path, package, checksum, revision, *, preview=False, undo
         if receipt is None:
             check(not undo and not slot.exists() and inventory(target) == before, 'unowned or changed installation')
             verify_jar((target / 'extension/G-Earth-Trade-Assistant.jar').read_bytes(), old_version)
+            verify_managed_launcher((target / 'command.txt').read_bytes(), descriptor)
             receipt = {'identity': identity, 'descriptor': descriptor, 'manifest': manifest, 'before': before, 'after': after, 'state': 'preparing'}
         check(receipt.get('identity') == identity and receipt.get('descriptor') == descriptor and receipt.get('manifest') == manifest
               and receipt.get('before') == before and receipt.get('after') == after
@@ -439,6 +445,7 @@ def deliver(descriptor_path, package, checksum, revision, *, preview=False, undo
         original = target if current == before else slot
         check(inventory(original) == before, 'original installation identity differs')
         verify_jar((original / 'extension/G-Earth-Trade-Assistant.jar').read_bytes(), old_version)
+        verify_managed_launcher((original / 'command.txt').read_bytes(), descriptor)
         if undo:
             check(receipt['state'] != 'preparing', 'install must finish before rollback')
             restored = receipt['state'] in ('rolling_back', 'rolled_back') and current == before and retained == after
@@ -448,6 +455,7 @@ def deliver(descriptor_path, package, checksum, revision, *, preview=False, undo
                 receipt['state'] = 'rolling_back'; save(receipt_path, receipt)
                 stopped(); check(inventory(target) == after and inventory(slot) == before, 'rollback inputs drifted')
                 verify_java_runtime(descriptor, host)
+                verify_managed_launcher((slot / "command.txt").read_bytes(), descriptor)
                 exchange(target, slot)
             check(inventory(target) == before and inventory(slot) == after, 'rollback verification failed')
             sync_dir(target.parent); sync_dir(state)
@@ -477,6 +485,7 @@ def deliver(descriptor_path, package, checksum, revision, *, preview=False, undo
             sync_dir(slot / 'extension'); sync_dir(slot); sync_dir(state)
             stopped(); check(inventory(target) == before and inventory(slot) == after, 'activation inputs drifted')
             verify_java_runtime(descriptor, host)
+            verify_managed_launcher((slot / "command.txt").read_bytes(), descriptor)
             exchange(target, slot)
         check(inventory(target) == after and inventory(slot) == before, 'installed verification failed')
         sync_dir(target.parent); sync_dir(state)

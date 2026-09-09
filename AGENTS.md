@@ -67,3 +67,9 @@ identify Java 21. Verify these inputs from the established runtime recipe; a has
 only binds identity and is not a substitute for that initial provenance check.
 The installer never runs a descriptor-supplied executable to discover its version.
 Archive verification rejects differing local/central compression methods or flags.
+
+The original and staged managed launcher argv must match the descriptor-attested
+Java command and literal host placeholders before any install or rollback. Keep
+retained bytes exact; an unverified previous command is refused, never rewritten
+as rollback evidence. Wine path lookup uses the unique actual case-insensitive
+entry and still refuses ambiguous siblings.
