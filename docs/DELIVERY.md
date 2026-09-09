@@ -112,3 +112,12 @@ altered files are preserved and refused. Member temporaries stay outside images.
 Scope publication cannot replace another binding. Immutable generation identities
 include both inventories; retry and rollback never infer authority from a temporary
 file. Test abrupt-write leftovers and retained-receipt tampering with synthetic data.
+
+The mapped Java command must be an absolute POSIX `java` ELF executable or a
+Windows `C:\...\java.exe` PE executable mapped beneath the host's `drive_c`. The
+private descriptor also binds `java_sha256` and `java_release_sha256` from the
+owner's verified Java 21 installation. The adjacent JDK/JRE `release` file must
+identify Java 21. Verify these inputs from the established runtime recipe; a hash
+only binds identity and is not a substitute for that initial provenance check.
+The installer never runs a descriptor-supplied executable to discover its version.
+Archive verification rejects differing local/central compression methods or flags.

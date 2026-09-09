@@ -12,9 +12,10 @@ import hashlib
 import io
 import json
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import stat
+import struct
 import sys
 import zipfile
 import zlib
@@ -107,6 +108,7 @@ def write_pending(path, data, temporary):
 
 
 def save(path, value):
+    check(len(json_bytes(value)) <= 32768, "generated receipt size budget exceeded")
     write_pending(path, json_bytes(value), path.with_name(path.name + '.pending'))
 
 
@@ -123,7 +125,7 @@ def state_scope(descriptor):
             for key in ('target', 'host_executable', 'locks')}
 
 
-def retention_preflight(directory, descriptor, identity, pending_values=None):
+def retention_preflight(directory, descriptor, identity, pending_values=None, *, reserve=True):
     if not directory.exists(): return
     pending_values = pending_values or {}
     names = []
@@ -145,7 +147,7 @@ def retention_preflight(directory, descriptor, identity, pending_values=None):
         match = re.fullmatch(r'([0-9a-f]{64})(\.json|\.retained)', name)
         check(match is not None, 'unknown retained state entry')
         generations.setdefault(match[1], set()).add(match[2])
-    check(len(set(generations) | {identity}) <= 8,
+    check(len(set(generations) | ({identity} if reserve else set())) <= 8,
           'eight retained generations reached; preserve and reconcile before another update')
     for generation, suffixes in generations.items():
         check('.json' in suffixes, 'orphan retained generation')
@@ -204,6 +206,78 @@ def inventory(root, partial=False):
     return values
 
 
+def verify_local_headers(archive, data):
+    for member in archive.infolist():
+        offset = member.header_offset
+        check(0 <= offset <= len(data) - 30 and data[offset:offset + 4] == b'PK\x03\x04', 'invalid local ZIP header')
+        flags, method = struct.unpack_from('<HH', data, offset + 6)
+        check(method == member.compress_type and flags == member.flag_bits,
+              'local and central ZIP metadata differ')
+
+
+def verify_java_runtime(descriptor, host):
+    command = descriptor['java_executable']
+    check(isinstance(command, str) and command and not any(c in command for c in '\r\n\0{}'), 'invalid Java command')
+    if command.startswith('/'):
+        executable = Path(command)
+        check(executable.name == 'java' and '..' not in executable.parts, 'absolute canonical Java executable required')
+        check(str(executable) == command and executable.parent.name == 'bin', 'canonical Java bin layout required')
+        signature = b'\x7fELF'
+    else:
+        windows = PureWindowsPath(command)
+        check(windows.is_absolute() and windows.drive.upper() == 'C:' and windows.name.lower() == 'java.exe'
+              and '..' not in windows.parts and '/' not in command, 'absolute supported Wine Java executable required')
+        raw = command.split('\\')
+        check(raw[0].upper() == 'C:' and len(raw) >= 3 and raw[-2].lower() == 'bin'
+              and all(part and part not in ('.', '..') and part[-1] not in '. '
+                      and not any(ord(c) < 32 or c in ':*?"<>|' for c in part)
+                      and not re.fullmatch(r'(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])', part.split('.')[0], re.IGNORECASE)
+                      for part in raw[1:]), 'ambiguous Windows Java path refused')
+        drive = next((parent for parent in host.parents if parent.name == 'drive_c'), None)
+        check(drive is not None, 'Wine Java drive is not mapped by the host')
+        executable = drive
+        for part in raw[1:]:
+            check(sum(child.name.casefold() == part.casefold() for child in executable.iterdir()) == 1,
+                  'ambiguous or missing Wine Java path component')
+            executable = executable / part
+
+        signature = b'MZ'
+    release = executable.parent.parent / 'release'
+    protected = [Path(descriptor[key]) for key in ('target', 'state_directory', 'receipt_directory') if key in descriptor]
+    check(all(not path.is_relative_to(root) for path in (executable, release) for root in protected),
+          'Java runtime overlaps a managed image')
+    owners = []
+
+    for path, key, budget in [(executable, 'java_sha256', 16 * 1024 * 1024),
+                              (release, 'java_release_sha256', 32768)]:
+        regular(path)
+        info = path.stat()
+        check(path.is_file() and info.st_uid in (0, os.getuid()) and not info.st_mode & 0o022
+              and info.st_size <= budget, 'untrusted or oversized Java runtime input')
+        owners.append(info.st_uid)
+        expected = descriptor.get(key)
+        check(isinstance(expected, str) and re.fullmatch(r'[0-9a-f]{64}', expected)
+              and sha(path.read_bytes()) == expected, 'Java runtime attestation differs')
+    binary = executable.read_bytes()
+    check(binary.startswith(signature), 'Java executable format differs')
+    if signature == b'MZ':
+        check(len(binary) >= 64, 'Java PE header is truncated')
+        pe_offset = struct.unpack_from('<I', binary, 60)[0]
+        check(64 <= pe_offset <= len(binary) - 4 and binary[pe_offset:pe_offset + 4] == b'PE\0\0',
+                'Java PE signature differs')
+    if signature == b'\x7fELF': check(os.access(executable, os.X_OK), 'Java executable is not executable')
+
+    check(owners[0] == owners[1] and (signature != b'MZ' or owners[0] == os.getuid()),
+          'Java runtime ownership differs')
+    release_text = release.read_text()
+    check(len(re.findall(r'^\s*JAVA_VERSION\s*=', release_text, re.MULTILINE)) == 1,
+          'ambiguous Java release version assignment')
+    versions = re.findall(r'^JAVA_VERSION="([^"\r\n]+)"$', release_text, re.MULTILINE)
+    check(len(versions) == 1 and re.fullmatch(r'21(?:\.[0-9]+)*(?:[+_-][A-Za-z0-9.+_-]+)?', versions[0]),
+          'attested runtime is not Java 21')
+    return command
+
+
 def read_package(path, checksum, revision):
     path = regular(path)
     check(isinstance(checksum, str) and DIGEST.fullmatch(checksum)
@@ -211,6 +285,7 @@ def read_package(path, checksum, revision):
     check(path.is_file() and path.stat().st_size <= LIMIT, 'package unavailable or oversized')
     data = path.read_bytes(); check(sha(data) == checksum, 'package checksum differs')
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        verify_local_headers(archive, data)
         entries = archive.infolist()
         check(len(entries) <= 7 and sum(e.file_size for e in entries) <= LIMIT, 'package expansion limit')
         check(all(e.compress_type in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED) for e in entries), 'unsupported package compression')
@@ -247,6 +322,7 @@ def read_package(path, checksum, revision):
 def verify_jar(data, version):
     check(len(data) <= LIMIT, 'JAR size limit')
     with zipfile.ZipFile(io.BytesIO(data)) as jar:
+        verify_local_headers(jar, data)
         check(len(jar.infolist()) <= 10000 and sum(e.file_size for e in jar.infolist()) <= LIMIT, 'JAR expansion limit')
         check(all(e.compress_type in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED) for e in jar.infolist()), 'unsupported JAR compression')
         fields = {}; last = None
@@ -320,7 +396,7 @@ def deliver(descriptor_path, package, checksum, revision, *, preview=False, undo
     manifest, payload = read_package(package, checksum, revision)
     old_version = descriptor['expected_version']; check(isinstance(old_version, str) and SEMVER.fullmatch(old_version), 'invalid expected version')
     check(tuple(map(int, manifest['version'].split('.'))) >= tuple(map(int, old_version.split('.'))), 'older version refused')
-    java = descriptor['java_executable']; check(isinstance(java, str) and java and not any(c in java for c in '\0\r\n{}'), 'invalid explicit Java executable')
+    java = verify_java_runtime(descriptor, host); check(isinstance(java, str) and java and not any(c in java for c in '\0\r\n{}'), 'invalid explicit Java executable')
     command = json.loads(payload['command.txt'])
     if command[0] != java:
         command[0] = java; payload['command.txt'] = json_bytes(command)
@@ -331,6 +407,7 @@ def deliver(descriptor_path, package, checksum, revision, *, preview=False, undo
         stopped(); check(load_private(descriptor_path) == descriptor, 'descriptor changed under lock')
         regular(host)
         check(sha(host.read_bytes()) == descriptor['host_sha256'], 'host changed under lock')
+        check(verify_java_runtime(descriptor, host) == java, 'Java runtime changed under lock')
         ancestor = state
         while not ancestor.exists(): ancestor = ancestor.parent
         check(ancestor.stat().st_dev == target.parent.stat().st_dev, 'exchange requires the same filesystem')
@@ -351,8 +428,11 @@ def deliver(descriptor_path, package, checksum, revision, *, preview=False, undo
                    identity + '.json.pending': [json_bytes(dict(receipt, state=value))
                        for value in ('preparing', 'installed', 'rolling_back', 'rolled_back')]}
         pending.update({member_temporary(slot, name).name: [data] for name, data in payload.items()})
-        retention_preflight(state, descriptor, identity, pending)
-        if not receipt_path.exists() and before == after:
+        unchanged = not receipt_path.exists() and before == after
+        check(unchanged or all(len(value) <= 32768 for value in pending[identity + '.json.pending']),
+              'generated receipt size budget exceeded')
+        retention_preflight(state, descriptor, identity, pending, reserve=not unchanged)
+        if unchanged:
             return {'state': 'preview' if preview else 'unchanged', 'manifest': manifest,
                     'installed_files': after, 'loaded': False, 'rollback': 'existing installation was not changed'}
         current = inventory(target); retained = inventory(slot, partial=True) if slot.exists() else None
@@ -367,6 +447,7 @@ def deliver(descriptor_path, package, checksum, revision, *, preview=False, undo
             if not restored:
                 receipt['state'] = 'rolling_back'; save(receipt_path, receipt)
                 stopped(); check(inventory(target) == after and inventory(slot) == before, 'rollback inputs drifted')
+                verify_java_runtime(descriptor, host)
                 exchange(target, slot)
             check(inventory(target) == before and inventory(slot) == after, 'rollback verification failed')
             sync_dir(target.parent); sync_dir(state)
@@ -395,6 +476,7 @@ def deliver(descriptor_path, package, checksum, revision, *, preview=False, undo
                 write_pending(path, data, member_temporary(slot, name))
             sync_dir(slot / 'extension'); sync_dir(slot); sync_dir(state)
             stopped(); check(inventory(target) == before and inventory(slot) == after, 'activation inputs drifted')
+            verify_java_runtime(descriptor, host)
             exchange(target, slot)
         check(inventory(target) == after and inventory(slot) == before, 'installed verification failed')
         sync_dir(target.parent); sync_dir(state)

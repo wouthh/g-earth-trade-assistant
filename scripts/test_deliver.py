@@ -44,6 +44,13 @@ class PackageTests(unittest.TestCase):
             if extra: archive.writestr(extra, b'unsafe extra')
         self.digest = d.sha(self.package.read_bytes())
 
+    def test_local_only_compression_disagreement_is_refused(self):
+        data = bytearray(self.package.read_bytes()); struct.pack_into('<H', data, 8, 99)
+        bad = self.root / 'local-method.zip'; bad.write_bytes(data)
+        with self.assertRaisesRegex(d.Refused, 'local and central'): d.read_package(bad, d.sha(data), SOURCE)
+        jar = bytearray(synthetic_jar()); struct.pack_into('<H', jar, 8, 99)
+        with self.assertRaisesRegex(d.Refused, 'local and central'): d.verify_jar(jar, VERSION)
+
     def test_complete_manifest(self):
         manifest, files = d.read_package(self.package, self.digest, SOURCE)
         self.assertEqual(files, self.files)
@@ -111,6 +118,11 @@ class ExchangeTests(PackageTests):
                      'receipt_directory': str(self.state), 'host_executable': str(self.host),
                      'host_sha256': d.sha(self.host.read_bytes()), 'locks': [str(self.lock)],
                      'expected_files': self.before, 'expected_version': VERSION, 'java_executable': COMMAND[0]}
+        self.java = self.root / "jdk/bin/java"; self.java.parent.mkdir(parents=True)
+        self.java.write_bytes(b"\x7fELFsynthetic Java 21 executable; never executed"); self.java.chmod(0o700)
+        self.release = self.java.parent.parent / "release"; self.release.write_text('JAVA_VERSION="21.0.11"\n'); self.release.chmod(0o600)
+        self.desc.update({"java_executable": str(self.java), "java_sha256": d.sha(self.java.read_bytes()),
+                          "java_release_sha256": d.sha(self.release.read_bytes())})
         self.write_descriptor()
 
     def write_descriptor(self):
@@ -183,6 +195,8 @@ class ExchangeTests(PackageTests):
             self.files['README.md'] = f'synthetic generation {number}'.encode(); self.make_package()
             self.run_delivery()
         self.desc['expected_files'] = d.inventory(self.target); self.write_descriptor()
+        self.assertEqual(self.run_delivery()['state'], 'unchanged')
+        self.assertEqual(len(list(self.state.glob('[0-9a-f]*.json'))), 8)
         self.files['README.md'] = b'synthetic ninth generation'; self.make_package()
         with self.assertRaisesRegex(d.Refused, 'eight retained generations'): self.run_delivery()
         self.files['README.md'] = b'synthetic generation 7'; self.make_package()
@@ -270,6 +284,8 @@ class ExchangeTests(PackageTests):
 
     def test_already_current_is_nonmutating(self):
         for name, data in self.files.items(): (self.target / name).write_bytes(data)
+        command = list(COMMAND); command[0] = self.desc['java_executable']
+        (self.target / 'command.txt').write_bytes(d.json_bytes(command))
         self.desc['expected_files'] = d.inventory(self.target); self.write_descriptor()
         self.assertEqual(self.run_delivery()['state'], 'unchanged')
         self.assertFalse(self.state.exists())
@@ -392,6 +408,51 @@ class ExchangeTests(PackageTests):
         with self.assertRaisesRegex(d.Refused, 'hardlink refused'): self.run_delivery()
         self.assertEqual(unrelated.read_bytes(), b'')
         self.assertEqual(pending.stat().st_ino, unrelated.stat().st_ino)
+    def test_java_version_and_wine_path_are_unambiguous(self):
+        for version in ['JAVA_VERSION="21.0.11"\nJAVA_VERSION=17\n', 'JAVA_VERSION="210"\n',
+                        'JAVA_VERSION="21.0.11"\n JAVA_VERSION = "17"\n']:
+            self.release.write_text(version)
+            desc = dict(self.desc, java_release_sha256=d.sha(self.release.read_bytes()))
+            with self.assertRaises(d.Refused): d.verify_java_runtime(desc, self.host)
+        drive = self.root / 'wine/drive_c'; binary = drive / 'JRE/bin/java.exe'
+        binary.parent.mkdir(parents=True); release = binary.parent.parent / 'release'
+        pe = bytearray(128); pe[:2] = b'MZ'; struct.pack_into('<I', pe, 60, 64); pe[64:68] = b'PE\0\0'
+        binary.write_bytes(pe); binary.chmod(0o700)
+        release.write_text('JAVA_VERSION="21.0.11+9"\n'); release.chmod(0o600)
+        desc = dict(self.desc, java_executable=r'C:\JRE\bin\java.exe', java_sha256=d.sha(pe),
+                    java_release_sha256=d.sha(release.read_bytes()))
+        host = drive / 'host/host.jar'
+        self.assertEqual(d.verify_java_runtime(desc, host), desc['java_executable'])
+        for command in [r'C:\JRE\.\bin\java.exe', r'C:\JRE\\bin\java.exe', r'C:\JRE.\bin\java.exe',
+                        r'C:\JRE\bin\java.exe:stream', r'C:\CON\bin\java.exe', r'C:JRE\bin\java.exe']:
+            with self.assertRaises(d.Refused): d.verify_java_runtime(dict(desc, java_executable=command), host)
+        (drive / 'jre').mkdir()
+        with self.assertRaisesRegex(d.Refused, 'ambiguous'): d.verify_java_runtime(desc, host)
+        (drive / 'jre').rmdir()
+        binary.write_bytes(b'MZinvalid'); desc['java_sha256'] = d.sha(binary.read_bytes())
+        with self.assertRaisesRegex(d.Refused, 'PE header'): d.verify_java_runtime(desc, host)
+
+    def test_java_runtime_mapping_and_attestation_are_required(self):
+        original = dict(self.desc)
+        for field, value in [("java_executable", "java21"), ("java_executable", str(self.root / "missing/java")),
+                             ("java_sha256", "e" * 64), ("java_release_sha256", "e" * 64)]:
+            self.desc = dict(original, **{field: value}); self.write_descriptor()
+            with self.assertRaises((d.Refused, OSError)): self.run_delivery()
+            self.assertFalse(self.state.exists())
+        self.desc = original
+        self.release.write_text('JAVA_VERSION="17.0.16"\n')
+        self.desc["java_release_sha256"] = d.sha(self.release.read_bytes()); self.write_descriptor()
+        with self.assertRaisesRegex(d.Refused, "not Java 21"): self.run_delivery()
+        self.assertFalse(self.state.exists())
+
+    def test_generated_receipt_budget_is_checked_before_installation(self):
+        self.desc['extra'] = 'x' * (32000 - len(d.json_bytes(self.desc)))
+        self.write_descriptor()
+        self.assertLess(self.descriptor.stat().st_size, 32768)
+        with self.assertRaisesRegex(d.Refused, 'generated receipt size'): self.run_delivery()
+        self.assertFalse(self.state.exists())
+        self.assertEqual(d.inventory(self.target), self.before)
+
 
 
 if __name__ == '__main__': unittest.main()
