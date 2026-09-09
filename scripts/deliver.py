@@ -110,6 +110,7 @@ def read_package(path, checksum, revision):
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         entries = archive.infolist()
         check(len(entries) <= 7 and sum(e.file_size for e in entries) <= LIMIT, 'package expansion limit')
+        check(all(e.compress_type in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED) for e in entries), 'unsupported package compression')
         names = [e.filename.rstrip('/') for e in entries]
         check(len(set(n.casefold() for n in names)) == len(names), 'ambiguous package paths')
         top = names[0].split('/')[0] if names else ''
@@ -136,6 +137,7 @@ def read_package(path, checksum, revision):
           'launcher placeholders or layout differ')
     with zipfile.ZipFile(io.BytesIO(payload['extension/G-Earth-Trade-Assistant.jar'])) as jar:
         check(len(jar.infolist()) <= 10000 and sum(e.file_size for e in jar.infolist()) <= LIMIT, 'JAR expansion limit')
+        check(all(e.compress_type in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED) for e in jar.infolist()), 'unsupported JAR compression')
         fields = {}; last = None
         for line in jar.read('META-INF/MANIFEST.MF').decode().splitlines():
             if not line: break

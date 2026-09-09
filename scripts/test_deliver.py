@@ -2,6 +2,8 @@
 import io
 import json
 import os
+import struct
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -64,6 +66,19 @@ class PackageTests(unittest.TestCase):
                 if not name.endswith('.class'): changed.writestr(name, jar.read(name))
         self.files['extension/G-Earth-Trade-Assistant.jar'] = output.getvalue(); self.make_package()
         with self.assertRaises(d.Refused): d.read_package(self.package, self.digest, SOURCE)
+
+    def test_unsupported_zip_cli_failure_is_sanitized(self):
+        for codec in (zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA, 99):
+            with self.subTest(codec=codec):
+                data = bytearray(self.package.read_bytes())
+                for signature, offset in [(b'PK\x03\x04', 8), (b'PK\x01\x02', 10)]:
+                    position = data.index(signature); struct.pack_into('<H', data, position + offset, codec)
+                bad = self.root / 'unsupported.zip'; bad.write_bytes(data)
+                result = subprocess.run([sys.executable, d.__file__, 'verify', '--package', str(bad),
+                                         '--sha256', d.sha(data), '--source', SOURCE], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 1)
+                self.assertTrue(result.stderr.startswith('Delivery refused:'))
+                self.assertNotIn('Traceback', result.stderr); self.assertNotIn(str(self.root), result.stderr)
 
     def test_launcher_and_version_guard(self):
         original = self.files['command.txt']
