@@ -44,7 +44,8 @@ Its schema is `1`, component is `g-earth-trade-assistant`, and its fields are:
   filesystem as the target. Preserve it for retries and rollback.
 - `host_executable` and `host_sha256`: the verified host file in the parent of
   `Extensions` and its exact SHA-256.
-- `locks`: the host launcher's existing one to four owner-only lock file paths.
+- `locks`: the host launcher's existing one to four empty, user-owned lock files,
+  with no group/world write permission. Readable empty locks need no chmod.
 - `expected_files`: the exact current SHA-256 map for the five managed files.
 - `expected_version`: the verified installed product version, consistent with the
   inspected JAR and file map. Never derive it from a stale directory name alone.

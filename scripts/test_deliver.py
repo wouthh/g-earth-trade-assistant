@@ -216,6 +216,17 @@ class ExchangeTests(PackageTests):
         self.desc['expected_version'] = VERSION; self.desc['receipt_directory'] = str(self.target / 'state'); self.write_descriptor()
         with self.assertRaises(d.Refused): self.run_delivery()
 
+    def test_existing_readable_empty_host_lock_is_preserved(self):
+        self.lock.chmod(0o644)
+        self.run_delivery(preview=True)
+        self.assertEqual(self.lock.stat().st_mode & 0o777, 0o644)
+        self.assertEqual(self.lock.read_bytes(), b'')
+        self.lock.chmod(0o666)
+        with self.assertRaises(d.Refused): self.run_delivery(preview=True)
+        self.lock.chmod(0o600); self.lock.write_bytes(b'unexpected lock data')
+        with self.assertRaises(d.Refused): self.run_delivery(preview=True)
+        self.assertFalse(self.state.exists())
+
     def test_busy_and_drifted_activation(self):
         def busy(): raise d.Refused('synthetic active host')
         with self.assertRaises(d.Refused): d.deliver(self.descriptor, self.package, self.digest, SOURCE, stopped=busy)

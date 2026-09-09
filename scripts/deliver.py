@@ -181,12 +181,12 @@ def writer_locks(paths):
     import fcntl
     with contextlib.ExitStack() as resources:
         for path in sorted(paths):
-            regular(path, True); expected = os.stat(path)
+            regular(path); expected = os.stat(path)
             fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW); resources.callback(os.close, fd)
             actual = os.fstat(fd)
             check((expected.st_dev, expected.st_ino) == (actual.st_dev, actual.st_ino)
                   and stat.S_ISREG(actual.st_mode) and actual.st_uid == os.getuid()
-                  and not actual.st_mode & 0o077, 'lock identity changed')
+                  and not actual.st_mode & 0o022 and actual.st_size == 0, 'lock identity changed')
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         yield
 
