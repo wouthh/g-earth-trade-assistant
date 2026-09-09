@@ -280,7 +280,7 @@ def verify_java_runtime(descriptor, host):
 
     check(owners[0] == owners[1] and (signature != b'MZ' or owners[0] == os.getuid()),
           'Java runtime ownership differs')
-    release_text = snapshots['java_release_sha256'].decode()
+    release_text = snapshots['java_release_sha256'].decode().replace('\r\n', '\n').replace('\r', '\n')
     check(len(re.findall(r'^\s*JAVA_VERSION\s*=', release_text, re.MULTILINE)) == 1,
           'ambiguous Java release version assignment')
     versions = re.findall(r'^JAVA_VERSION="([^"\r\n]+)"$', release_text, re.MULTILINE)

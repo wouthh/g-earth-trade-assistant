@@ -461,6 +461,11 @@ class ExchangeTests(PackageTests):
         self.assertFalse(self.state.exists())
         self.assertEqual(d.inventory(self.target), self.desc['expected_files'])
 
+    def test_attested_windows_release_line_endings_are_accepted(self):
+        self.release.write_bytes(b'JAVA_VERSION="21.0.11"\r\n')
+        self.desc['java_release_sha256'] = d.sha(self.release.read_bytes()); self.write_descriptor()
+        self.run_delivery()
+
     def test_atomic_runtime_replacement_after_hash_is_refused(self):
         for path in (self.java, self.release):
             with self.subTest(path=path.name):
