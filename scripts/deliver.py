@@ -237,9 +237,14 @@ def verify_java_runtime(descriptor, host):
         check(drive is not None, 'Wine Java drive is not mapped by the host')
         executable = drive
         for part in raw[1:]:
-            matches = [child for child in executable.iterdir() if child.name.casefold() == part.casefold()]
-            check(len(matches) == 1, 'ambiguous or missing Wine Java path component')
-            executable = matches[0]
+            selected = None
+            with os.scandir(executable) as children:
+                for child in children:
+                    if child.name.casefold() == part.casefold():
+                        check(selected is None, 'ambiguous Wine Java path component')
+                        selected = executable / child.name
+            check(selected is not None, 'missing Wine Java path component')
+            executable = selected
 
         signature = b'MZ'
     release = executable.parent.parent / 'release'

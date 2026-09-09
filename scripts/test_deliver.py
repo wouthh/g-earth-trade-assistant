@@ -431,6 +431,22 @@ class ExchangeTests(PackageTests):
         for command in [r'C:\JRE\.\bin\java.exe', r'C:\JRE\\bin\java.exe', r'C:\JRE.\bin\java.exe',
                         r'C:\JRE\bin\java.exe:stream', r'C:\CON\bin\java.exe', r'C:JRE\bin\java.exe']:
             with self.assertRaises(d.Refused): d.verify_java_runtime(dict(desc, java_executable=command), host)
+        import contextlib
+        from unittest.mock import patch as patch_scan
+        real_scan = d.os.scandir
+        @contextlib.contextmanager
+        def bounded_scan(path):
+            if path == drive:
+                class Entry:
+                    def __init__(self, name): self.name = name
+                def entries():
+                    yield Entry('JRE'); yield Entry('jre')
+                    raise AssertionError('scan advanced beyond the second match')
+                yield entries()
+            else:
+                with real_scan(path) as children: yield children
+        with patch_scan.object(d.os, 'scandir', bounded_scan):
+            with self.assertRaisesRegex(d.Refused, 'ambiguous'): d.verify_java_runtime(desc, host)
         (drive / 'jre').mkdir()
         with self.assertRaisesRegex(d.Refused, 'ambiguous'): d.verify_java_runtime(desc, host)
         (drive / 'jre').rmdir()
