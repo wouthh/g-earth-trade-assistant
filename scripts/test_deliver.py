@@ -19,12 +19,12 @@ TOP = 'G-Earth-Trade-Assistant-' + VERSION
 COMMAND = ['java21', '-jar', 'G-Earth-Trade-Assistant.jar', '-p', '{port}', '-f', '{filename}', '-c', '{cookie}']
 
 
-def synthetic_jar():
+def synthetic_jar(version=VERSION):
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w') as jar:
         jar.writestr('io/github/wouthh/tradeassistant/protocol/TradeAssistantExtension.class', b'synthetic class')
         jar.writestr('META-INF/MANIFEST.MF', 'Main-Class: io.github.wouthh.tradeassistant.protocol.TradeAssistantExtension\n')
-        jar.writestr('META-INF/maven/io.github.wouthh/g-earth-trade-assistant/pom.properties', 'version=0.1.0\n')
+        jar.writestr('META-INF/maven/io.github.wouthh/g-earth-trade-assistant/pom.properties', 'version=' + version + '\n')
     return buffer.getvalue()
 
 
@@ -100,6 +100,7 @@ class ExchangeTests(PackageTests):
         self.target = self.root / 'host/Extensions' / TOP
         (self.target / 'extension').mkdir(parents=True)
         for name in d.FILES: (self.target / name).write_bytes(b'old ' + name.encode())
+        (self.target / 'extension/G-Earth-Trade-Assistant.jar').write_bytes(synthetic_jar())
         self.other = self.target.parent / 'OtherPlugin/settings.json'
         self.other.parent.mkdir(); self.other.write_bytes(b'unrelated data')
         self.host = self.root / 'host/G-Earth.exe'; self.host.write_bytes(b'synthetic verified host')
@@ -117,6 +118,88 @@ class ExchangeTests(PackageTests):
 
     def run_delivery(self, **options):
         return d.deliver(self.descriptor, self.package, self.digest, SOURCE, stopped=lambda: None, **options)
+
+
+    def test_stale_descriptor_cannot_hide_newer_installed_version(self):
+        (self.target / 'extension/G-Earth-Trade-Assistant.jar').write_bytes(synthetic_jar('0.2.0'))
+        self.desc['expected_files'] = d.inventory(self.target); self.write_descriptor()
+        for preview in (False, True):
+            with self.assertRaisesRegex(d.Refused, 'JAR version differs'): self.run_delivery(preview=preview)
+        self.assertFalse(self.state.exists())
+
+    def test_unwritable_target_parent_rejects_preview_and_execution(self):
+        self.target.parent.chmod(0o500)
+        try:
+            for preview in (True, False):
+                with self.assertRaisesRegex(d.Refused, 'target parent is not writable'): self.run_delivery(preview=preview)
+            self.assertFalse(self.state.exists())
+        finally: self.target.parent.chmod(0o700)
+
+    def test_completed_retry_reflushes_both_exchange_parents(self):
+        original_sync = d.sync_dir
+        for undo in (False, True):
+            def fail_final(path):
+                final = (d.inventory(self.target) == self.before) == undo
+                if Path(path) == self.target.parent and final: raise OSError('synthetic target-parent flush failure')
+                original_sync(path)
+            with patch.object(d, 'sync_dir', side_effect=fail_final):
+                for retry in range(2):
+                    with self.assertRaises(OSError): self.run_delivery(undo=undo)
+            receipt = json.loads(next(self.state.glob('[0-9a-f]*.json')).read_text())
+            self.assertNotEqual(receipt['state'], 'rolled_back' if undo else 'installed')
+            self.run_delivery(undo=undo)
+        self.assertEqual(d.inventory(self.target), self.before)
+
+    def test_retry_flushes_existing_staged_jar_parent_before_exchange(self):
+        original_sync = d.sync_dir
+        def fail_nested(path):
+            if Path(path).name == 'extension' and Path(path).parent.parent == self.state:
+                raise OSError('synthetic nested-directory flush failure')
+            original_sync(path)
+        with patch.object(d, 'sync_dir', side_effect=fail_nested):
+            for retry in range(2):
+                with self.assertRaises(OSError): self.run_delivery()
+                self.assertEqual(d.inventory(self.target), self.before)
+        self.run_delivery()
+
+    def test_scope_binding_file_flush_is_retried_before_activation(self):
+        real_fsync = os.fsync
+        def fail_binding(fd):
+            link = os.readlink(f'/proc/self/fd/{fd}')
+            if link.endswith('/.scope.json'): raise OSError('synthetic binding flush failure')
+            real_fsync(fd)
+        with patch.object(d.os, 'fsync', side_effect=fail_binding):
+            for retry in range(2):
+                with self.assertRaises(OSError): self.run_delivery()
+                self.assertEqual(d.inventory(self.target), self.before)
+        self.run_delivery()
+
+    def test_retention_cap_preserves_retry_rollback_and_scope(self):
+        descriptors = []
+        for number in range(8):
+            self.desc['expected_files'] = d.inventory(self.target); self.write_descriptor()
+            descriptors.append(dict(self.desc))
+            self.files['README.md'] = f'synthetic generation {number}'.encode(); self.make_package()
+            self.run_delivery()
+        self.desc['expected_files'] = d.inventory(self.target); self.write_descriptor()
+        self.files['README.md'] = b'synthetic ninth generation'; self.make_package()
+        with self.assertRaisesRegex(d.Refused, 'eight retained generations'): self.run_delivery()
+        self.files['README.md'] = b'synthetic generation 7'; self.make_package()
+        self.desc = descriptors[-1]; self.write_descriptor()
+        self.run_delivery(); self.run_delivery(undo=True)
+        self.desc['locks'] = [str(self.root / 'different.lock')]
+        Path(self.desc['locks'][0]).touch(mode=0o600); self.write_descriptor()
+        with self.assertRaisesRegex(d.Refused, 'scope or host locks'): self.run_delivery(preview=True)
+
+
+    def test_orphan_and_malformed_retained_receipts_are_preserved_and_refused(self):
+        self.run_delivery()
+        orphan = self.state / ('f' * 64 + '.retained'); orphan.mkdir(mode=0o700)
+        with self.assertRaisesRegex(d.Refused, 'orphan retained generation'): self.run_delivery(preview=True)
+        self.assertTrue(orphan.exists()); orphan.rmdir()
+        malformed = self.state / ('f' * 64 + '.json'); malformed.write_text('{}'); malformed.chmod(0o600)
+        with self.assertRaisesRegex(d.Refused, 'invalid retained generation receipt'): self.run_delivery(preview=True)
+        self.assertEqual(malformed.read_text(), '{}')
 
     def test_new_rollback_ancestors_are_durable_before_exchange(self):
         self.state = self.root / 'new-private-parent' / 'receipts'

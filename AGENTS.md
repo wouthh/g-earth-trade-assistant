@@ -43,3 +43,8 @@ Guidance adapted from the reviewed public AI engineering playbook at revision `b
 - Any new send path must prove identity provenance, bounded intent, cancellation and acknowledgement through fake-transport regressions. A successful socket write is not server success.
 - Keep live purchasing unavailable until matching cost, quantity, delivery and balance semantics are evidenced and documented. Abstract test receipts are not Origins messages.
 - Inspect every published commit for private source, raw captures or expanded credentials. Preserve licenses and keep current runtime evidence out of public documentation. Do not merge, release or install this extension without separate task authority.
+
+Delivery state retains at most eight verified operation generations under one
+stable target/host/lock binding; preserve and refuse unknown or altered rollback
+evidence. Follow `docs/DELIVERY.md` for capacity, installed-JAR version checks,
+and crash-retry durability. Never prune retained generations automatically.

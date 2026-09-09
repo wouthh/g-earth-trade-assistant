@@ -84,6 +84,66 @@ def save(path, value):
         if os.path.exists(temporary): os.unlink(temporary)
 
 
+def state_scope(descriptor):
+    return {key: (sorted(descriptor[key]) if key == 'locks' else descriptor[key])
+            for key in ('target', 'host_executable', 'locks')}
+
+
+def retention_preflight(directory, descriptor, identity):
+    if not directory.exists(): return
+    names = []
+    with os.scandir(directory) as children:
+        for child in children:
+            names.append(child.name)
+            check(len(names) <= 17, 'retained state entry capacity exceeded')
+    if names:
+        check('.scope.json' in names and load_private(directory / '.scope.json') == state_scope(descriptor),
+              'retained state scope or host locks differ')
+    generations = {}
+    for name in names:
+        if name == '.scope.json': continue
+        match = re.fullmatch(r'([0-9a-f]{64})(\.json|\.retained)', name)
+        check(match is not None, 'unknown retained state entry')
+        generations.setdefault(match[1], set()).add(match[2])
+    check(len(set(generations) | {identity}) <= 8,
+          'eight retained generations reached; preserve and reconcile before another update')
+    for generation, suffixes in generations.items():
+        check('.json' in suffixes, 'orphan retained generation')
+        receipt = load_private(directory / (generation + '.json'))
+        check(receipt.get('identity') == generation and receipt.get('state') in ('preparing', 'installed', 'rolling_back', 'rolled_back'),
+              'invalid retained generation receipt')
+        manifest = receipt.get('manifest')
+        check(isinstance(manifest, dict) and manifest.get('schema') == 1 and manifest.get('component') == 'g-earth-trade-assistant'
+              and isinstance(manifest.get('source_revision'), str) and REVISION.fullmatch(manifest['source_revision'])
+              and isinstance(manifest.get('version'), str) and SEMVER.fullmatch(manifest['version'])
+              and isinstance(manifest.get('package_sha256'), str) and DIGEST.fullmatch(manifest['package_sha256']),
+              'invalid retained generation manifest')
+        for values in (receipt.get('before'), receipt.get('after'), manifest.get('files')):
+            check(isinstance(values, dict) and set(values) == FILES
+                  and all(isinstance(x, str) and DIGEST.fullmatch(x) for x in values.values()), 'invalid retained inventory')
+        check(generation == identity or receipt['state'] in ('installed', 'rolled_back'), 'another retained operation is incomplete')
+        if receipt['state'] != 'preparing': check('.retained' in suffixes, 'retained generation image missing')
+        if '.retained' not in suffixes: continue
+        actual = inventory(directory / (generation + '.retained'), partial=True)
+        if receipt['state'] == 'preparing':
+            valid = actual == receipt['before'] or all(receipt['after'].get(k) == v for k, v in actual.items())
+        elif receipt['state'] == 'installed': valid = actual == receipt['before']
+        elif receipt['state'] == 'rolled_back': valid = actual == receipt['after']
+        else: valid = actual in (receipt['before'], receipt['after'])
+        check(valid, 'retained generation contents changed')
+
+
+def bind_retention_scope(directory, descriptor):
+    path = directory / '.scope.json'
+    if not path.exists():
+        with path.open('xb') as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(json_bytes(state_scope(descriptor))); stream.flush(); os.fsync(stream.fileno())
+    check(load_private(path) == state_scope(descriptor), 'retained state scope or host locks differ')
+    with path.open('rb') as stream: os.fsync(stream.fileno())
+    sync_dir(directory)
+
+
 def inventory(root, partial=False):
     root = regular(root)
     check(root.is_dir(), 'mapped extension directory missing')
@@ -135,7 +195,15 @@ def read_package(path, checksum, revision):
     check(isinstance(command, list) and len(command) == 9 and isinstance(command[0], str)
           and command[1:] == ['-jar', 'G-Earth-Trade-Assistant.jar', '-p', '{port}', '-f', '{filename}', '-c', '{cookie}'],
           'launcher placeholders or layout differ')
-    with zipfile.ZipFile(io.BytesIO(payload['extension/G-Earth-Trade-Assistant.jar'])) as jar:
+    verify_jar(payload['extension/G-Earth-Trade-Assistant.jar'], version)
+    return {'schema': 1, 'component': 'g-earth-trade-assistant', 'source_revision': revision,
+            'version': version, 'package_sha256': checksum,
+            'files': {name: sha(data) for name, data in payload.items()}}, payload
+
+
+def verify_jar(data, version):
+    check(len(data) <= LIMIT, 'JAR size limit')
+    with zipfile.ZipFile(io.BytesIO(data)) as jar:
         check(len(jar.infolist()) <= 10000 and sum(e.file_size for e in jar.infolist()) <= LIMIT, 'JAR expansion limit')
         check(all(e.compress_type in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED) for e in jar.infolist()), 'unsupported JAR compression')
         fields = {}; last = None
@@ -149,11 +217,8 @@ def read_package(path, checksum, revision):
         check(fields.get('main-class') == 'io.github.wouthh.tradeassistant.protocol.TradeAssistantExtension', 'wrong JAR entry point')
         check('io/github/wouthh/tradeassistant/protocol/TradeAssistantExtension.class' in jar.namelist(), 'JAR entrypoint class missing')
         props = jar.read('META-INF/maven/io.github.wouthh/g-earth-trade-assistant/pom.properties').decode().splitlines()
-        check('version=' + version in props, 'JAR/package version differs')
+        check([line for line in props if line.startswith('version=')] == ['version=' + version], 'JAR version differs from expected version')
         check(jar.testzip() is None, 'corrupt JAR')
-    return {'schema': 1, 'component': 'g-earth-trade-assistant', 'source_revision': revision,
-            'version': version, 'package_sha256': checksum,
-            'files': {name: sha(data) for name, data in payload.items()}}, payload
 
 
 def no_java():
@@ -224,12 +289,14 @@ def deliver(descriptor_path, package, checksum, revision, *, preview=False, undo
         while not ancestor.exists(): ancestor = ancestor.parent
         check(ancestor.stat().st_dev == target.parent.stat().st_dev, 'exchange requires the same filesystem')
         check(os.access(ancestor, os.W_OK | os.X_OK), 'receipt directory ancestor is not writable')
+        check(target.parent.is_dir() and os.access(target.parent, os.W_OK | os.X_OK), 'target parent is not writable')
         if state.exists(): check(state.is_dir() and state.stat().st_uid == os.getuid()
                                  and not state.stat().st_mode & 0o077 and state.stat().st_mode & 0o700 == 0o700,
                                  'writable private receipt directory required')
         receipt = load_private(receipt_path) if receipt_path.exists() else None
         if receipt is None:
             check(not undo and not slot.exists() and inventory(target) == before, 'unowned or changed installation')
+            verify_jar((target / 'extension/G-Earth-Trade-Assistant.jar').read_bytes(), old_version)
             if before == after:
                 return {'state': 'preview' if preview else 'unchanged', 'manifest': manifest,
                         'installed_files': after, 'loaded': False, 'rollback': 'existing installation was not changed'}
@@ -237,7 +304,11 @@ def deliver(descriptor_path, package, checksum, revision, *, preview=False, undo
         check(receipt.get('identity') == identity and receipt.get('manifest') == manifest
               and receipt.get('before') == before and receipt.get('after') == after
               and receipt.get('state') in ('preparing', 'installed', 'rolling_back', 'rolled_back'), 'receipt mismatch')
+        retention_preflight(state, descriptor, identity)
         current = inventory(target); retained = inventory(slot, partial=True) if slot.exists() else None
+        original = target if current == before else slot
+        check(inventory(original) == before, 'original installation identity differs')
+        verify_jar((original / 'extension/G-Earth-Trade-Assistant.jar').read_bytes(), old_version)
         if undo:
             check(receipt['state'] != 'preparing', 'install must finish before rollback')
             restored = receipt['state'] in ('rolling_back', 'rolled_back') and current == before and retained == after
@@ -248,6 +319,7 @@ def deliver(descriptor_path, package, checksum, revision, *, preview=False, undo
                 stopped(); check(inventory(target) == after and inventory(slot) == before, 'rollback inputs drifted')
                 exchange(target, slot)
             check(inventory(target) == before and inventory(slot) == after, 'rollback verification failed')
+            sync_dir(target.parent); sync_dir(state)
             receipt['state'] = 'rolled_back'; save(receipt_path, receipt)
             return {'state': 'rolled_back', 'loaded': False}
         check(receipt['state'] in ('preparing', 'installed'), 'rollback completed or pending; reconcile before reinstall')
@@ -263,6 +335,7 @@ def deliver(descriptor_path, package, checksum, revision, *, preview=False, undo
         # Revalidate durability on retries, including already existing ancestors.
         for directory in [state, *state.parents]:
             sync_dir(directory)
+        bind_retention_scope(state, descriptor)
         if not receipt_path.exists(): save(receipt_path, receipt)
         if not done:
             slot.mkdir(mode=0o700, exist_ok=True); (slot / 'extension').mkdir(mode=0o700, exist_ok=True)
@@ -276,10 +349,11 @@ def deliver(descriptor_path, package, checksum, revision, *, preview=False, undo
                     os.rename(temporary, path); sync_dir(path.parent)
                 finally:
                     if os.path.exists(temporary): os.unlink(temporary)
-            sync_dir(slot); sync_dir(state)
+            sync_dir(slot / 'extension'); sync_dir(slot); sync_dir(state)
             stopped(); check(inventory(target) == before and inventory(slot) == after, 'activation inputs drifted')
             exchange(target, slot)
         check(inventory(target) == after and inventory(slot) == before, 'installed verification failed')
+        sync_dir(target.parent); sync_dir(state)
         receipt['state'] = 'installed'; save(receipt_path, receipt)
         return {'state': 'unchanged' if done else 'installed', 'manifest': manifest,
                 'installed_files': after, 'receipt': str(receipt_path), 'loaded': False}

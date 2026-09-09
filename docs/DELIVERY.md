@@ -89,3 +89,16 @@ Normal extension startup is disarmed and persisted jobs never auto-resume. Loadi
 or restarting a busy host still requires a separately safe activation boundary;
 never buy, redeem, trade or resume automation as a smoke test. When activation is
 deferred, retain a verified installed receipt and name the missing runtime proof.
+
+The mapped Extensions parent must pass the same write/execute preflight during
+preview and execution. The verified original JAR must match `expected_version`;
+recovery selects that original from the retained slot after an exchange. An
+already-exchanged retry flushes both parents again before finalizing its receipt,
+and a staged JAR's parent is flushed again even when the member already exists.
+
+A dedicated receipt directory retains at most eight operation generations, each
+with at most one 64 MiB image and a 32 KiB receipt. A private, durable scope record
+binds the directory to one target, host path and lock set. A ninth new generation
+is refused without pruning; existing-generation retry/rollback still works.
+Unknown files and incomplete scope records are preserved and refused. Reconcile
+old generations explicitly before consuming another slot.
