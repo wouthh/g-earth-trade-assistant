@@ -123,6 +123,9 @@ class ExchangeTests(PackageTests):
         self.release = self.java.parent.parent / "release"; self.release.write_text('JAVA_VERSION="21.0.11"\n'); self.release.chmod(0o600)
         self.desc.update({"java_executable": str(self.java), "java_sha256": d.sha(self.java.read_bytes()),
                           "java_release_sha256": d.sha(self.release.read_bytes())})
+        launcher = list(d.LAUNCH if hasattr(d, 'LAUNCH') else COMMAND); launcher[0] = self.desc['java_executable']
+        (self.target / 'command.txt').write_bytes(d.json_bytes(launcher))
+        self.before = d.inventory(self.target); self.desc['expected_files'] = self.before
         self.write_descriptor()
 
     def write_descriptor(self):
@@ -423,14 +426,40 @@ class ExchangeTests(PackageTests):
                     java_release_sha256=d.sha(release.read_bytes()))
         host = drive / 'host/host.jar'
         self.assertEqual(d.verify_java_runtime(desc, host), desc['java_executable'])
+        mixed = dict(desc, java_executable=r'c:\jre\BIN\JAVA.EXE')
+        self.assertEqual(d.verify_java_runtime(mixed, host), mixed['java_executable'])
         for command in [r'C:\JRE\.\bin\java.exe', r'C:\JRE\\bin\java.exe', r'C:\JRE.\bin\java.exe',
                         r'C:\JRE\bin\java.exe:stream', r'C:\CON\bin\java.exe', r'C:JRE\bin\java.exe']:
             with self.assertRaises(d.Refused): d.verify_java_runtime(dict(desc, java_executable=command), host)
+        import contextlib
+        from unittest.mock import patch as patch_scan
+        real_scan = d.os.scandir
+        @contextlib.contextmanager
+        def bounded_scan(path):
+            if path == drive:
+                class Entry:
+                    def __init__(self, name): self.name = name
+                def entries():
+                    yield Entry('JRE'); yield Entry('jre')
+                    raise AssertionError('scan advanced beyond the second match')
+                yield entries()
+            else:
+                with real_scan(path) as children: yield children
+        with patch_scan.object(d.os, 'scandir', bounded_scan):
+            with self.assertRaisesRegex(d.Refused, 'ambiguous'): d.verify_java_runtime(desc, host)
         (drive / 'jre').mkdir()
         with self.assertRaisesRegex(d.Refused, 'ambiguous'): d.verify_java_runtime(desc, host)
         (drive / 'jre').rmdir()
         binary.write_bytes(b'MZinvalid'); desc['java_sha256'] = d.sha(binary.read_bytes())
         with self.assertRaisesRegex(d.Refused, 'PE header'): d.verify_java_runtime(desc, host)
+
+    def test_unattested_retained_launcher_is_refused_before_install(self):
+        launcher = list(d.LAUNCH if hasattr(d, 'LAUNCH') else COMMAND); launcher[0] = 'old-java'
+        (self.target / 'command.txt').write_bytes(d.json_bytes(launcher))
+        self.desc['expected_files'] = d.inventory(self.target); self.write_descriptor()
+        with self.assertRaisesRegex(d.Refused, 'managed launcher'): self.run_delivery()
+        self.assertFalse(self.state.exists())
+        self.assertEqual(d.inventory(self.target), self.desc['expected_files'])
 
     def test_java_runtime_mapping_and_attestation_are_required(self):
         original = dict(self.desc)
