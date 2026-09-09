@@ -1,0 +1,235 @@
+"""Offline release and atomic update fixtures; no installed host or account input."""
+import io
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+import zipfile
+
+import deliver as d
+
+SOURCE = 'a' * 40
+VERSION = '0.1.0'
+TOP = 'G-Earth-Trade-Assistant-' + VERSION
+COMMAND = ['java21', '-jar', 'G-Earth-Trade-Assistant.jar', '-p', '{port}', '-f', '{filename}', '-c', '{cookie}']
+
+
+def synthetic_jar():
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, 'w') as jar:
+        jar.writestr('io/github/wouthh/tradeassistant/protocol/TradeAssistantExtension.class', b'synthetic class')
+        jar.writestr('META-INF/MANIFEST.MF', 'Main-Class: io.github.wouthh.tradeassistant.protocol.TradeAssistantExtension\n')
+        jar.writestr('META-INF/maven/io.github.wouthh/g-earth-trade-assistant/pom.properties', 'version=0.1.0\n')
+    return buffer.getvalue()
+
+
+class PackageTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.package = self.root / 'package.zip'
+        self.files = {name: ('synthetic ' + name).encode() for name in d.FILES}
+        self.files['command.txt'] = json.dumps(COMMAND).encode()
+        self.files['extension/G-Earth-Trade-Assistant.jar'] = synthetic_jar()
+        self.make_package()
+
+    def make_package(self, extra=None):
+        with zipfile.ZipFile(self.package, 'w') as archive:
+            for name, data in self.files.items(): archive.writestr(TOP + '/' + name, data)
+            if extra: archive.writestr(extra, b'unsafe extra')
+        self.digest = d.sha(self.package.read_bytes())
+
+    def test_complete_manifest(self):
+        manifest, files = d.read_package(self.package, self.digest, SOURCE)
+        self.assertEqual(files, self.files)
+        self.assertEqual(manifest['source_revision'], SOURCE)
+        self.assertEqual(manifest['version'], VERSION)
+        self.assertEqual(set(manifest['files']), d.FILES)
+
+    def test_corrupt_identity_and_path(self):
+        with self.assertRaises(d.Refused): d.read_package(self.package, '0' * 64, SOURCE)
+        with self.assertRaises(d.Refused): d.read_package(self.package, self.digest, 'main')
+        for extra in ['../outside', TOP + '/../outside', TOP + '/extra', '/' + TOP + '/escape', TOP + '/./command.txt']:
+            with self.subTest(extra=extra):
+                self.make_package(extra)
+                with self.assertRaises(d.Refused): d.read_package(self.package, self.digest, SOURCE)
+
+    def test_missing_entrypoint_class(self):
+        output = io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(synthetic_jar())) as jar, zipfile.ZipFile(output, 'w') as changed:
+            for name in jar.namelist():
+                if not name.endswith('.class'): changed.writestr(name, jar.read(name))
+        self.files['extension/G-Earth-Trade-Assistant.jar'] = output.getvalue(); self.make_package()
+        with self.assertRaises(d.Refused): d.read_package(self.package, self.digest, SOURCE)
+
+    def test_launcher_and_version_guard(self):
+        original = self.files['command.txt']
+        self.files['command.txt'] = json.dumps(['java', '-jar', 'wrong.jar']).encode(); self.make_package()
+        with self.assertRaises(d.Refused): d.read_package(self.package, self.digest, SOURCE)
+        self.files['command.txt'] = original
+        output = io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(synthetic_jar())) as jar, zipfile.ZipFile(output, 'w') as changed:
+            for name in jar.namelist():
+                changed.writestr(name, b'version=9.0.0\n' if name.endswith('pom.properties') else jar.read(name))
+        self.files['extension/G-Earth-Trade-Assistant.jar'] = output.getvalue(); self.make_package()
+        with self.assertRaises(d.Refused): d.read_package(self.package, self.digest, SOURCE)
+
+
+@unittest.skipUnless(sys.platform.startswith('linux'), 'Linux atomic directory exchange lane')
+class ExchangeTests(PackageTests):
+    def setUp(self):
+        super().setUp()
+        self.target = self.root / 'host/Extensions' / TOP
+        (self.target / 'extension').mkdir(parents=True)
+        for name in d.FILES: (self.target / name).write_bytes(b'old ' + name.encode())
+        self.other = self.target.parent / 'OtherPlugin/settings.json'
+        self.other.parent.mkdir(); self.other.write_bytes(b'unrelated data')
+        self.host = self.root / 'host/G-Earth.exe'; self.host.write_bytes(b'synthetic verified host')
+        self.lock = self.root / 'content.lock'; self.lock.touch(mode=0o600)
+        self.state = self.root / 'receipts'; self.descriptor = self.root / 'descriptor.json'
+        self.before = d.inventory(self.target)
+        self.desc = {'schema': 1, 'component': 'g-earth-trade-assistant', 'target': str(self.target),
+                     'receipt_directory': str(self.state), 'host_executable': str(self.host),
+                     'host_sha256': d.sha(self.host.read_bytes()), 'locks': [str(self.lock)],
+                     'expected_files': self.before, 'expected_version': VERSION, 'java_executable': COMMAND[0]}
+        self.write_descriptor()
+
+    def write_descriptor(self):
+        self.descriptor.write_bytes(d.json_bytes(self.desc)); self.descriptor.chmod(0o600)
+
+    def run_delivery(self, **options):
+        return d.deliver(self.descriptor, self.package, self.digest, SOURCE, stopped=lambda: None, **options)
+
+    def test_new_rollback_ancestors_are_durable_before_exchange(self):
+        self.state = self.root / 'new-private-parent' / 'receipts'
+        self.desc['receipt_directory'] = str(self.state); self.write_descriptor()
+        flushed = []; real_sync = d.sync_dir; real_exchange = d.exchange
+        def sync(path):
+            real_sync(path); flushed.append(Path(path))
+        def exchange(left, right):
+            self.assertIn(self.root, flushed)
+            self.assertIn(self.state.parent, flushed)
+            self.assertIn(self.state, flushed)
+            real_exchange(left, right)
+        with patch.object(d, 'sync_dir', side_effect=sync), patch.object(d, 'exchange', side_effect=exchange):
+            self.run_delivery()
+
+    def test_update_retry_and_rollback(self):
+        self.assertEqual(self.run_delivery(preview=True)['state'], 'preview'); self.assertFalse(self.state.exists())
+        result = self.run_delivery(); self.assertEqual(result['state'], 'installed'); self.assertFalse(result['loaded'])
+        self.assertEqual(self.run_delivery()['state'], 'unchanged')
+        self.assertEqual(self.run_delivery(undo=True, preview=True)['action'], 'rollback')
+        self.assertEqual(self.run_delivery(undo=True)['state'], 'rolled_back')
+        self.assertEqual(self.run_delivery(undo=True)['state'], 'rolled_back')
+        self.assertEqual(d.inventory(self.target), self.before)
+        with self.assertRaises(d.Refused): self.run_delivery(preview=True)
+        self.assertEqual(self.other.read_bytes(), b'unrelated data')
+
+    def test_target_local_locks_and_packages_are_refused(self):
+        self.desc['locks'] = [str(self.target / 'README.md')]; self.write_descriptor()
+        for preview in (True, False):
+            with self.assertRaisesRegex(d.Refused, 'outside the replaced target'): self.run_delivery(preview=preview)
+        self.desc['locks'] = [str(self.lock)]; self.write_descriptor()
+        for preview in (True, False):
+            with self.assertRaisesRegex(d.Refused, 'outside the replaced target'):
+                d.deliver(self.descriptor, self.target / 'README.md', self.digest, SOURCE, preview=preview, stopped=lambda: None)
+        self.assertEqual(d.inventory(self.target), self.before); self.assertFalse(self.state.exists())
+
+    def test_unusable_receipt_directory_is_refused_in_preview(self):
+        self.state.write_bytes(b'preserved'); self.state.chmod(0o600)
+        for preview in (True, False):
+            with self.assertRaises(d.Refused): self.run_delivery(preview=preview)
+        self.assertEqual(self.state.read_bytes(), b'preserved')
+        self.state.unlink(); self.state.mkdir(mode=0o500)
+        for preview in (True, False):
+            with self.assertRaises(d.Refused): self.run_delivery(preview=preview)
+        self.state.chmod(0o700)
+        self.assertEqual(d.inventory(self.target), self.before)
+
+    def test_retry_flushes_preexisting_receipt_ancestors(self):
+        self.state = self.root / 'new-private-parent' / 'receipts'
+        self.desc['receipt_directory'] = str(self.state); self.write_descriptor()
+        real_sync = d.sync_dir
+        def interrupted(path):
+            if Path(path) == self.state.parent: raise OSError('synthetic parent flush interruption')
+            real_sync(path)
+        with patch.object(d, 'sync_dir', side_effect=interrupted):
+            with self.assertRaises(OSError): self.run_delivery()
+        self.assertTrue(self.state.exists())
+        self.assertEqual(d.inventory(self.target), self.before)
+        flushed = []; real_exchange = d.exchange
+        def sync(path):
+            real_sync(path); flushed.append(Path(path))
+        def exchange(left, right):
+            for parent in [self.state, *self.state.parents]: self.assertIn(parent, flushed)
+            return real_exchange(left, right)
+        with patch.object(d, 'sync_dir', side_effect=sync), patch.object(d, 'exchange', side_effect=exchange):
+            self.run_delivery()
+
+    def test_already_current_is_nonmutating(self):
+        for name, data in self.files.items(): (self.target / name).write_bytes(data)
+        self.desc['expected_files'] = d.inventory(self.target); self.write_descriptor()
+        self.assertEqual(self.run_delivery()['state'], 'unchanged')
+        self.assertFalse(self.state.exists())
+        self.assertEqual(d.inventory(self.target), self.desc['expected_files'])
+
+    def test_foreign_files_symlinks_and_lock(self):
+        foreign = self.target / 'journal.json'; foreign.write_text('private fixture')
+        with self.assertRaises(d.Refused): self.run_delivery()
+        self.assertEqual(foreign.read_text(), 'private fixture'); foreign.unlink()
+        (self.target / 'unknown-directory').mkdir()
+        with self.assertRaises(d.Refused): self.run_delivery()
+        (self.target / 'unknown-directory').rmdir()
+        (self.target / 'README.md').unlink(); (self.target / 'README.md').symlink_to(self.other)
+        with self.assertRaises(d.Refused): self.run_delivery()
+        (self.target / 'README.md').unlink(); (self.target / 'README.md').write_bytes(b'old README.md')
+        import fcntl
+        with self.lock.open('r+') as file:
+            fcntl.flock(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with self.assertRaises(BlockingIOError): self.run_delivery()
+        self.assertEqual(d.inventory(self.target), self.before)
+
+    def test_wrong_host_older_version_and_collision(self):
+        self.host.write_bytes(b'changed')
+        with self.assertRaises(d.Refused): self.run_delivery()
+        self.host.write_bytes(b'synthetic verified host')
+        self.desc['expected_version'] = '0.2.0'; self.write_descriptor()
+        with self.assertRaises(d.Refused): self.run_delivery()
+        self.desc['expected_version'] = VERSION; self.desc['receipt_directory'] = str(self.target / 'state'); self.write_descriptor()
+        with self.assertRaises(d.Refused): self.run_delivery()
+
+    def test_busy_and_drifted_activation(self):
+        def busy(): raise d.Refused('synthetic active host')
+        with self.assertRaises(d.Refused): d.deliver(self.descriptor, self.package, self.digest, SOURCE, stopped=busy)
+        calls = 0
+        def drift():
+            nonlocal calls
+            calls += 1
+            if calls == 2: (self.target / 'README.md').write_bytes(b'other writer')
+        with self.assertRaises(d.Refused): d.deliver(self.descriptor, self.package, self.digest, SOURCE, stopped=drift)
+        self.assertEqual((self.target / 'README.md').read_bytes(), b'other writer')
+
+    def test_crash_after_each_exchange_resumes(self):
+        original = d.exchange
+        def after_exchange(left, right):
+            original(left, right); raise OSError('synthetic crash after atomic exchange')
+        with patch.object(d, 'exchange', side_effect=after_exchange), self.assertRaises(OSError): self.run_delivery()
+        self.assertEqual(self.run_delivery()['state'], 'unchanged')
+        with patch.object(d, 'exchange', side_effect=after_exchange), self.assertRaises(OSError): self.run_delivery(undo=True)
+        self.assertEqual(self.run_delivery(undo=True)['state'], 'rolled_back')
+        self.assertEqual(d.inventory(self.target), self.before)
+
+    def test_retained_tamper_refuses_real_and_preview(self):
+        result = self.run_delivery(); receipt = json.loads(Path(result['receipt']).read_text())
+        slot = self.state / (receipt['identity'] + '.retained')
+        (slot / 'README.md').write_bytes(b'tampered')
+        current = d.inventory(self.target)
+        for preview in [True, False]:
+            with self.assertRaises(d.Refused): self.run_delivery(undo=True, preview=preview)
+        self.assertEqual(d.inventory(self.target), current)
+
+
+if __name__ == '__main__': unittest.main()

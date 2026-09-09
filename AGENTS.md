@@ -27,6 +27,13 @@ This repository owns G-Earth Trade Assistant, a standalone Origins currency-furn
 
 ## Delivery
 
+Follow [docs/DELIVERY.md](docs/DELIVERY.md) for product/API version separation,
+the required JAR/ZIP artifacts, source-bound build receipts and guarded mapped
+Linux installation/rollback. Run the Python delivery regressions as well as the
+Maven gate. Use existing host locks and a private exact-inventory descriptor;
+preserve all other extensions and state. Report merged, packaged, installed and
+actually loaded identities separately. A stopped installation is not runtime proof.
+
 Use feature branches from the verified target, scoped changes, regression tests and current docs. Run the full gate and `git diff --check` before pushing. Open a ready PR only with publication authority; confirm hosted head and diff. Observe configured automatic Codex review before requesting another cycle. Inspect reviews, threads, checks and bot reactions; eyes and silence are not clearance. Fix valid findings with normal commits and repeat validation and fresh review for every substantive head. Bound review waits to about 15 minutes per cycle, and report exact pending heads when unavailable. Leave PRs unmerged unless separately authorized. Installation and account-changing smoke tests require separate authority.
 
 Guidance adapted from the reviewed public AI engineering playbook at revision `bd51a9360e3e46d3ad5b0f4f2fb25b644995bd2a`; no private project implementation is reused.
