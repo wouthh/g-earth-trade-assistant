@@ -155,9 +155,15 @@ verification, not that the extension is connected, healthy or armed. A missing,
 stopped, malformed, stale, PID-reused or mismatched receipt exits 2. Unsupported
 process diagnostics leave loaded identity unverified; never infer success from
 the startup file alone. Native Windows/Wine validation remains a separate target.
+State creation keeps inherited Windows ACLs and skips POSIX-only volume queries
+on providers without that attribute view. POSIX state permissions remain private.
 
 `python3 scripts/build.py` refuses dirty/untracked source, embeds the exact clean
 commit through Maven resource filtering and checks the source again afterward.
+It also refuses ignored files under Maven's source/resource, wrapper, API recipe
+and assembly input trees; Git's ordinary clean status does not cover those files.
+Refused inputs are preserved. Root `.build/` caches and `target/` output are separate
+from these source trees and remain subject to the pinned bootstrap/build checks.
 It does not edit tracked source or create a self-referential commit field. Plain
 `./mvnw clean verify` remains a development gate; its default `unverified` build
 provenance deliberately cannot emit a verified runtime receipt. Retain source,

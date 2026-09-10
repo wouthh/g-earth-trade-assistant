@@ -83,3 +83,6 @@ cannot. Preserve disarmed startup and no automatic recovery. Use
 `python3 scripts/build.py` for committed delivery provenance; ordinary Maven
 builds default to unverified identity. Test packaged fake-host lifecycle and
 stale/malformed receipt failure paths without live account traffic.
+Keep the clean-build guard's Maven input tree list aligned with resource, wrapper,
+API recipe and assembly changes; ignored inputs can enter packages despite a clean
+Git status and must be refused without deleting them.

@@ -258,7 +258,10 @@ public final class LocalState implements Journal, AutoCloseable {
     }
 
     private static void privatePermissions(Path p, boolean dir) throws IOException {
-        if (Files.getFileStore(p).supportsFileAttributeView("posix"))
+        // Windows providers have no POSIX view; asking Wine for a volume store
+        // can fail before that capability is checked. Preserve inherited ACLs.
+        if (p.getFileSystem().supportedFileAttributeViews().contains("posix")
+                && Files.getFileStore(p).supportsFileAttributeView("posix"))
             Files.setPosixFilePermissions(
                     p, PosixFilePermissions.fromString(dir ? "rwx------" : "rw-------"));
     }

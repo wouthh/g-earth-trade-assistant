@@ -6,6 +6,9 @@ import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
+# Maven's source/resource trees, wrapper configuration, API recipe and assembly
+# inputs. Root notices/README/POM are tracked; caches and target are not inputs.
+MAVEN_INPUT_TREES = ('src', '.mvn', 'build-support', 'packaging')
 
 
 def clean_revision(root):
@@ -13,6 +16,9 @@ def clean_revision(root):
         return subprocess.check_output(['git', *args], cwd=root, text=True).strip()
     if git('status', '--porcelain', '--untracked-files=all'):
         raise ValueError('Commit the intended source before producing a delivery build')
+    if git('ls-files', '--others', '--ignored', '--exclude-standard', '-z',
+           '--', *MAVEN_INPUT_TREES):
+        raise ValueError('Ignored build inputs must be reviewed outside the delivery checkout')
     revision = git('rev-parse', 'HEAD')
     if not re.fullmatch('[0-9a-f]{40}', revision):
         raise ValueError('A full committed source identity is required')
