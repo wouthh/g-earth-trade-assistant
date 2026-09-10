@@ -7,6 +7,31 @@ import build
 
 
 class BuildIdentityTest(unittest.TestCase):
+    def test_hidden_tracked_inputs_cannot_attest_a_clean_index(self):
+        for flag in ('--skip-worktree', '--assume-unchanged'):
+            with self.subTest(flag=flag), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                def git(*args):
+                    return subprocess.check_output(['git', '-C', str(root), *args],
+                                                   stderr=subprocess.PIPE)
+                git('init')
+                git('config', 'user.name', 'Fixture')
+                git('config', 'user.email', '1+fixture@users.noreply.github.com')
+                name = 'src/main/resources/META-INF/tradeassistant-build.properties'
+                path = root / name
+                path.parent.mkdir(parents=True)
+                path.write_text('committed provenance input')
+                git('add', name)
+                git('commit', '-m', 'Fixture committed input')
+                git('update-index', flag, name)
+                path.unlink()  # This test owns the temporary checkout.
+                self.assertEqual(b'', git('status', '--porcelain', '--untracked-files=all'))
+                index_before = git('ls-files', '-v', '-z')
+                with self.assertRaisesRegex(ValueError, 'Hidden tracked inputs'):
+                    build.clean_revision(root)
+                self.assertFalse(path.exists())
+                self.assertEqual(index_before, git('ls-files', '-v', '-z'))
+
     def test_ignored_maven_inputs_are_preserved_and_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

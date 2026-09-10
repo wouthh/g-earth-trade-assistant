@@ -16,6 +16,11 @@ def clean_revision(root):
         return subprocess.check_output(['git', *args], cwd=root, text=True).strip()
     if git('status', '--porcelain', '--untracked-files=all'):
         raise ValueError('Commit the intended source before producing a delivery build')
+    # -v marks assume-unchanged entries in lowercase; S marks skip-worktree.
+    # Both can hide missing or changed tracked files from the status above.
+    entries = git('ls-files', '-v', '-z').split('\0')
+    if any(entry[:1] == 'S' or entry[:1].islower() for entry in entries):
+        raise ValueError('Hidden tracked inputs cannot attest a complete committed checkout')
     if git('ls-files', '--others', '--ignored', '--exclude-standard', '-z',
            '--', *MAVEN_INPUT_TREES):
         raise ValueError('Ignored build inputs must be reviewed outside the delivery checkout')

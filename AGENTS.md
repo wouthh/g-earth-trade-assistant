@@ -86,3 +86,5 @@ stale/malformed receipt failure paths without live account traffic.
 Keep the clean-build guard's Maven input tree list aligned with resource, wrapper,
 API recipe and assembly changes; ignored inputs can enter packages despite a clean
 Git status and must be refused without deleting them.
+Do not attest sparse/skip-worktree or assume-unchanged index entries as a complete
+source snapshot; preserve that checkout and build from a complete isolated one.

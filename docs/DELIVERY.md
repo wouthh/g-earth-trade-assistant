@@ -162,6 +162,9 @@ on providers without that attribute view. POSIX state permissions remain private
 commit through Maven resource filtering and checks the source again afterward.
 It also refuses ignored files under Maven's source/resource, wrapper, API recipe
 and assembly input trees; Git's ordinary clean status does not cover those files.
+Tracked `skip-worktree` or `assume-unchanged` entries are refused as well: sparse
+or hidden index state can conceal missing resources or tests from ordinary status.
+The preflight preserves those files and index flags; use a complete separate checkout.
 Refused inputs are preserved. Root `.build/` caches and `target/` output are separate
 from these source trees and remain subject to the pinned bootstrap/build checks.
 It does not edit tracked source or create a self-referential commit field. Plain
