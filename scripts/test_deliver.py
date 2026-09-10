@@ -461,6 +461,30 @@ class ExchangeTests(PackageTests):
         self.assertFalse(self.state.exists())
         self.assertEqual(d.inventory(self.target), self.desc['expected_files'])
 
+    def test_attested_windows_release_line_endings_are_accepted(self):
+        self.release.write_bytes(b'JAVA_VERSION="21.0.11"\r\n')
+        self.desc['java_release_sha256'] = d.sha(self.release.read_bytes()); self.write_descriptor()
+        self.run_delivery()
+
+    def test_atomic_runtime_replacement_after_hash_is_refused(self):
+        for path in (self.java, self.release):
+            with self.subTest(path=path.name):
+                original = path.read_bytes(); original_mode = path.stat().st_mode & 0o777
+                real_hash = d.sha; replaced = False
+                def replace_after_hash(data):
+                    nonlocal replaced
+                    value = real_hash(data)
+                    if data == original and not replaced:
+                        replaced = True
+                        temporary = path.with_name(path.name + '.replacement')
+                        temporary.write_bytes(original + b'\n'); temporary.chmod(original_mode)
+                        os.replace(temporary, path)
+                    return value
+                with patch.object(d, 'sha', replace_after_hash):
+                    with self.assertRaisesRegex(d.Refused, 'runtime path changed'): self.run_delivery()
+                self.assertTrue(replaced); self.assertFalse(self.state.exists())
+                path.write_bytes(original); path.chmod(original_mode)
+
     def test_java_runtime_mapping_and_attestation_are_required(self):
         original = dict(self.desc)
         for field, value in [("java_executable", "java21"), ("java_executable", str(self.root / "missing/java")),

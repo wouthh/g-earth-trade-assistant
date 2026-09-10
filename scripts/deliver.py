@@ -251,19 +251,25 @@ def verify_java_runtime(descriptor, host):
     protected = [Path(descriptor[key]) for key in ('target', 'state_directory', 'receipt_directory') if key in descriptor]
     check(all(not path.is_relative_to(root) for path in (executable, release) for root in protected),
           'Java runtime overlaps a managed image')
-    owners = []
-
+    owners = []; snapshots = {}; identities = {}
+    def identity(info):
+        return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_mode, info.st_uid)
     for path, key, budget in [(executable, 'java_sha256', 16 * 1024 * 1024),
                               (release, 'java_release_sha256', 32768)]:
         regular(path)
-        info = path.stat()
-        check(path.is_file() and info.st_uid in (0, os.getuid()) and not info.st_mode & 0o022
-              and info.st_size <= budget, 'untrusted or oversized Java runtime input')
-        owners.append(info.st_uid)
+        with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), 'rb') as stream:
+            info = os.fstat(stream.fileno())
+            check(stat.S_ISREG(info.st_mode) and info.st_uid in (0, os.getuid()) and not info.st_mode & 0o022
+                    and info.st_size <= budget, 'untrusted or oversized Java runtime input')
+            data = stream.read(budget + 1)
+            check(len(data) == info.st_size and identity(os.fstat(stream.fileno())) == identity(info),
+                    'Java runtime changed during snapshot')
+        check(identity(path.stat(follow_symlinks=False)) == identity(info), 'Java runtime path changed during snapshot')
+        owners.append(info.st_uid); snapshots[key] = data; identities[path] = identity(info)
         expected = descriptor.get(key)
         check(isinstance(expected, str) and re.fullmatch(r'[0-9a-f]{64}', expected)
-              and sha(path.read_bytes()) == expected, 'Java runtime attestation differs')
-    binary = executable.read_bytes()
+              and sha(data) == expected, 'Java runtime attestation differs')
+    binary = snapshots['java_sha256']
     check(binary.startswith(signature), 'Java executable format differs')
     if signature == b'MZ':
         check(len(binary) >= 64, 'Java PE header is truncated')
@@ -274,12 +280,14 @@ def verify_java_runtime(descriptor, host):
 
     check(owners[0] == owners[1] and (signature != b'MZ' or owners[0] == os.getuid()),
           'Java runtime ownership differs')
-    release_text = release.read_text()
+    release_text = snapshots['java_release_sha256'].decode().replace('\r\n', '\n').replace('\r', '\n')
     check(len(re.findall(r'^\s*JAVA_VERSION\s*=', release_text, re.MULTILINE)) == 1,
           'ambiguous Java release version assignment')
     versions = re.findall(r'^JAVA_VERSION="([^"\r\n]+)"$', release_text, re.MULTILINE)
     check(len(versions) == 1 and re.fullmatch(r'21(?:\.[0-9]+)*(?:[+_-][A-Za-z0-9.+_-]+)?', versions[0]),
           'attested runtime is not Java 21')
+    check(all(identity(path.stat(follow_symlinks=False)) == value for path, value in identities.items()),
+            'Java runtime path changed after snapshot')
     return command
 
 
