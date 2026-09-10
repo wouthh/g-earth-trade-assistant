@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 """Package an exact clean commit with embedded, non-self-referential provenance."""
+# Only builtins run before isolation; recipe-local modules/bytecode cannot shadow imports.
+import sys
+if __name__ == '__main__' and not (sys.flags.isolated and sys.dont_write_bytecode):
+    _native_os = __import__('posix' if 'posix' in sys.builtin_module_names else 'nt')
+    _native_os.execv(sys.executable, [sys.executable, '-I', '-B', __file__, *sys.argv[1:]])
+
 from pathlib import Path
 import os
 import re
@@ -7,13 +13,18 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
 # Maven's source/resource trees, wrapper configuration, API recipe and assembly
-# inputs. Root notices/README/POM are tracked; caches and target are not inputs.
-MAVEN_INPUT_TREES = ('src', '.mvn', 'build-support', 'packaging')
+# inputs plus Python recipes. Root notices/README/POM are tracked; root caches
+# and target are not inputs. Recipe bytecode is refused, never imported by a CLI.
+MAVEN_INPUT_TREES = ('src', '.mvn', 'build-support', 'packaging', 'scripts')
 
 
 def clean_revision(root):
     def git(*args):
-        return subprocess.check_output(['git', *args], cwd=root, text=True).strip()
+        # Rescan tracked files instead of trusting a stale fsmonitor result, and
+        # do not execute its configured hook or refresh the caller's index.
+        return subprocess.check_output(
+            ['git', '--no-optional-locks', '-c', 'core.fsmonitor=false', *args],
+            cwd=root, text=True).strip()
     if git('status', '--porcelain', '--untracked-files=all'):
         raise ValueError('Commit the intended source before producing a delivery build')
     # -v marks assume-unchanged entries in lowercase; S marks skip-worktree.

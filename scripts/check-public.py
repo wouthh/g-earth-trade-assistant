@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
 """Conservative checked-in file/history audit; prints paths/reasons, never matching data."""
+# Only builtins run before isolation; recipe-local modules/bytecode cannot shadow imports.
+import sys
+if __name__ == '__main__' and not (sys.flags.isolated and sys.dont_write_bytecode):
+    _native_os = __import__('posix' if 'posix' in sys.builtin_module_names else 'nt')
+    _native_os.execv(sys.executable, [sys.executable, '-I', '-B', __file__, *sys.argv[1:]])
+
 from pathlib import Path
 import re
 import subprocess
 
 root = Path(__file__).resolve().parent.parent
 def git(*args):
-    return subprocess.check_output(['git', *args], cwd=root)
+    return subprocess.check_output(
+        ['git', '--no-optional-locks', '-c', 'core.fsmonitor=false', *args], cwd=root)
 def public_commit_identity(identity):
     """Accept public author emails and GitHub's server-side merge committer."""
     author_name, author_email, committer_name, committer_email = identity

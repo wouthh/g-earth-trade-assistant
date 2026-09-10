@@ -17,10 +17,10 @@ Conversion is irreversible. Automation can violate platform rules; there is no c
 Requirements: a **full JDK 21+** supporting `--release 21`, Python 3.12+, network access to public dependency repositories for the initial bootstrap, and Git for the publication audit. A runtime-only Java installation is insufficient even when it contains some compiler modules. CI uses Temurin 21.
 
 ```sh
-python3 scripts/bootstrap.py
+python3 -I -B scripts/bootstrap.py
 ./mvnw clean verify
-python3 -m unittest discover -s scripts -p 'test_*.py'
-python3 scripts/check-public.py
+python3 -I -B -m unittest discover -s scripts -p 'test_*.py'
+python3 -I -B scripts/check-public.py
 java -jar target/g-earth-trade-assistant-0.1.1.jar --demo
 ```
 
@@ -75,4 +75,4 @@ Loaded-code checks are passive and separate from game status. Delivery builds ca
 write a privacy-safe lifecycle receipt in the existing application state folder;
 use the bounded verifier documented in [delivery guidance](docs/DELIVERY.md#passive-loaded-identity).
 A startup receipt alone does not prove a process is still running. Build deliverable
-artifacts from a clean commit with `python3 scripts/build.py` after bootstrap.
+artifacts from a clean commit with `python3 -I -B scripts/build.py` after bootstrap.

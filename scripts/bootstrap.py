@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 """Build only the public pinned API. Never operates on installed G-Earth."""
+# Only builtins run before isolation; recipe-local modules/bytecode cannot shadow imports.
+import sys
+if __name__ == '__main__' and not (sys.flags.isolated and sys.dont_write_bytecode):
+    _native_os = __import__('posix' if 'posix' in sys.builtin_module_names else 'nt')
+    _native_os.execv(sys.executable, [sys.executable, '-I', '-B', __file__, *sys.argv[1:]])
+
 import hashlib
 import io
 import os

@@ -12,9 +12,9 @@ pinned G-Earth API revision and required Java 21 runtime are separate identities
 see [PROTOCOL.md](PROTOCOL.md). Guidance or installer changes that do not change
 the extension runtime do not require a new product version.
 
-Start with a clean, committed, reviewed source revision. Run `python3
-scripts/bootstrap.py`, `python3 scripts/build.py`, `python3 -m unittest discover -s
-scripts -p 'test_*.py'`, `python3 scripts/check-public.py` and `git diff --check`.
+Start with a clean, committed, reviewed source revision. Run `python3 -I -B
+scripts/bootstrap.py`, `python3 -I -B scripts/build.py`, `python3 -I -B -m unittest discover -s
+scripts -p 'test_*.py'`, `python3 -I -B scripts/check-public.py` and `git diff --check`.
 The bootstrap verifies the pinned public API source; it is not an installation
 step. Use an isolated cache and synthetic state. Run the packaged offline smoke
 with `java -jar target/g-earth-trade-assistant-<version>.jar --demo`.
@@ -58,7 +58,7 @@ Keep machine paths, host descriptors
 and receipts private. No profile databases, journals or expanded authentication
 arguments belong in a receipt or repository.
 
-Invoke `python3 scripts/deliver.py verify --package <absolute-zip> --sha256
+Invoke `python3 -I -B scripts/deliver.py verify --package <absolute-zip> --sha256
 <sha256> --source <40-character-commit>`. For installation, replace `verify` with
 `install` and add `--descriptor <absolute-json>`; first add `--dry-run`. Preview
 uses the same identity, writer-lock, inventory and recovery guards as execution.
@@ -158,15 +158,27 @@ the startup file alone. Native Windows/Wine validation remains a separate target
 State creation keeps inherited Windows ACLs and skips POSIX-only volume queries
 on providers without that attribute view. POSIX state permissions remain private.
 
-`python3 scripts/build.py` refuses dirty/untracked source, embeds the exact clean
+`python3 -I -B scripts/build.py` refuses dirty/untracked source, embeds the exact clean
 commit through Maven resource filtering and checks the source again afterward.
 It also refuses ignored files under Maven's source/resource, wrapper, API recipe
-and assembly input trees; Git's ordinary clean status does not cover those files.
+and assembly input trees, plus Python recipe files and bytecode under `scripts/`;
+Git's ordinary clean status does not cover those files.
 Tracked `skip-worktree` or `assume-unchanged` entries are refused as well: sparse
 or hidden index state can conceal missing resources or tests from ordinary status.
 The preflight preserves those files and index flags; use a complete separate checkout.
+Guarded Git reads disable fsmonitor for that command and optional index refreshes:
+a stale monitor cannot hide changed source, no monitor hook is invoked, and the
+caller's monitor configuration and index are preserved.
 Refused inputs are preserved. Root `.build/` caches and `target/` output are separate
 from these source trees and remain subject to the pinned bootstrap/build checks.
+Each Python CLI re-executes itself with `-I -B` using only built-in modules before
+standard-library imports. Ordinary `python3 scripts/<tool>.py` calls still work;
+recipe-local modules and legacy bytecode never enter those import paths. Library
+imports retain their caller's semantics; run tests only after source preflight,
+with `-I -B` to avoid generating recipe bytecode. Existing script caches are
+preserved and refused; use a fresh isolated checkout instead of deleting them.
+This protects against local recipe shadowing, not an untrusted interpreter,
+site configuration or build toolchain.
 It does not edit tracked source or create a self-referential commit field. Plain
 `./mvnw clean verify` remains a development gate; its default `unverified` build
 provenance deliberately cannot emit a verified runtime receipt. Retain source,

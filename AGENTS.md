@@ -19,8 +19,8 @@ This repository owns G-Earth Trade Assistant, a standalone Origins currency-furn
 
 ## Validation and privacy
 
-- Full JDK 21+, Python 3.12+, Maven Wrapper, JUnit 5. Bootstrap: `python3 scripts/bootstrap.py`. Full canonical gate: `./mvnw clean verify`; it includes format, unit and packaged fake-host/ZIP checks. Focused regressions: `./mvnw -Dtest=ConversionEngineTest,OriginsCodecTest test`.
-- Privacy/history gate: `python3 -m unittest discover -s scripts -p 'test_*.py'` and `python3 scripts/check-public.py` (public author emails; GitHub’s exact server merge committer is allowed) plus manual staged/history review and `git diff --check`. Network-free artifact smoke: `java -jar target/g-earth-trade-assistant-0.1.1.jar --demo`. CI mirrors the same headless gate and publishes artifacts. Private evidence validation is local-only through the opt-in `privateEvidence` property; standard CI intentionally skips it.
+- Full JDK 21+, Python 3.12+, Maven Wrapper, JUnit 5. Bootstrap: `python3 -I -B scripts/bootstrap.py`. Full canonical gate: `./mvnw clean verify`; it includes format, unit and packaged fake-host/ZIP checks. Focused regressions: `./mvnw -Dtest=ConversionEngineTest,OriginsCodecTest test`.
+- Privacy/history gate: `python3 -I -B -m unittest discover -s scripts -p 'test_*.py'` and `python3 -I -B scripts/check-public.py` (public author emails; GitHub’s exact server merge committer is allowed) plus manual staged/history review and `git diff --check`. Network-free artifact smoke: `java -jar target/g-earth-trade-assistant-0.1.1.jar --demo`. CI mirrors the same headless gate and publishes artifacts. Private evidence validation is local-only through the opt-in `privateEvidence` property; standard CI intentionally skips it.
 - Tests use fixtures, fake transport and isolated temporary state. Never redeem, buy, trade, log in, or contact a hotel during tests.
 - Keep private captures, credentials, authentication arguments, logs, journals, settings, generated binaries, Maven caches and upstream checkouts out of every published commit.
 - Preserve unexplained working-tree changes; never reset, stash, clean, rebase, amend or force-push to fit the workflow.
@@ -80,7 +80,7 @@ under its lock. Keep the receipt free of paths, process arguments and game data.
 Only the live process/start identity plus matching artifact/source verifier can
 establish point-in-time loaded identity; startup files alone and PID-only checks
 cannot. Preserve disarmed startup and no automatic recovery. Use
-`python3 scripts/build.py` for committed delivery provenance; ordinary Maven
+`python3 -I -B scripts/build.py` for committed delivery provenance; ordinary Maven
 builds default to unverified identity. Test packaged fake-host lifecycle and
 stale/malformed receipt failure paths without live account traffic.
 Keep the clean-build guard's Maven input tree list aligned with resource, wrapper,
@@ -88,3 +88,10 @@ API recipe and assembly changes; ignored inputs can enter packages despite a cle
 Git status and must be refused without deleting them.
 Do not attest sparse/skip-worktree or assume-unchanged index entries as a complete
 source snapshot; preserve that checkout and build from a complete isolated one.
+
+Python CLIs establish `-I -B` isolation using builtins before any recipe-local
+imports. Keep canonical tests at `python3 -I -B -m unittest ...`; do not allow
+ignored script source or bytecode (including `__pycache__`) into delivery inputs.
+Preserve refused inputs and use a fresh isolated checkout.
+Source guards disable Git fsmonitor per command and optional index refreshes;
+never trust a cached clean monitor result or invoke a checkout's monitor hook.

@@ -5,6 +5,12 @@ Linux renameat2 exchanges complete directories atomically. A private receipt
 binds both inventories, allowing retries to identify either side of an interrupted
 exchange. Application state lives elsewhere and is never opened here.
 """
+# Only builtins run before isolation; recipe-local modules/bytecode cannot shadow imports.
+import sys
+if __name__ == '__main__' and not (sys.flags.isolated and sys.dont_write_bytecode):
+    _native_os = __import__('posix' if 'posix' in sys.builtin_module_names else 'nt')
+    _native_os.execv(sys.executable, [sys.executable, '-I', '-B', __file__, *sys.argv[1:]])
+
 import argparse
 import contextlib
 import ctypes
@@ -16,7 +22,6 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import stat
 import struct
-import sys
 import zipfile
 import zlib
 
