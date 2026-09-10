@@ -197,6 +197,35 @@ class PackagedJarIT {
                                 io.github.wouthh.tradeassistant.runtime.LoadedIdentity.verify(
                                         identity, jar, build.getProperty("source"));
                         assertTrue(evidence.getBoolean("loaded"));
+                        Process verifier =
+                                new ProcessBuilder(
+                                                Path.of(
+                                                                System.getProperty("java.home"),
+                                                                "bin",
+                                                                "java")
+                                                        .toString(),
+                                                "-jar",
+                                                jar.toString(),
+                                                "--verify-loaded",
+                                                identity.toString(),
+                                                jar.toString(),
+                                                build.getProperty("source"))
+                                        .redirectErrorStream(true)
+                                        .redirectOutput(temp.resolve("identity.log").toFile())
+                                        .start();
+                        try {
+                            assertTrue(verifier.waitFor(5, TimeUnit.SECONDS));
+                            assertEquals(
+                                    0,
+                                    verifier.exitValue(),
+                                    Files.readString(temp.resolve("identity.log")));
+                            assertTrue(
+                                    new org.json.JSONObject(
+                                                    Files.readString(temp.resolve("identity.log")))
+                                            .getBoolean("loaded"));
+                        } finally {
+                            verifier.destroyForcibly();
+                        }
                         String receipt = Files.readString(identity);
                         assertFalse(receipt.contains("synthetic-cookie"));
                         assertFalse(receipt.contains(temp.toString()));
