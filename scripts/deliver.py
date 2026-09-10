@@ -331,13 +331,13 @@ def read_package(path, checksum, revision):
     check(isinstance(command, list) and len(command) == 9 and isinstance(command[0], str)
           and command[1:] == ['-jar', 'G-Earth-Trade-Assistant.jar', '-p', '{port}', '-f', '{filename}', '-c', '{cookie}'],
           'launcher placeholders or layout differ')
-    verify_jar(payload['extension/G-Earth-Trade-Assistant.jar'], version)
+    verify_jar(payload['extension/G-Earth-Trade-Assistant.jar'], version, revision)
     return {'schema': 1, 'component': 'g-earth-trade-assistant', 'source_revision': revision,
             'version': version, 'package_sha256': checksum,
             'files': {name: sha(data) for name, data in payload.items()}}, payload
 
 
-def verify_jar(data, version):
+def verify_jar(data, version, revision=None):
     check(len(data) <= LIMIT, 'JAR size limit')
     with zipfile.ZipFile(io.BytesIO(data)) as jar:
         verify_local_headers(jar, data)
@@ -355,6 +355,15 @@ def verify_jar(data, version):
         check('io/github/wouthh/tradeassistant/protocol/TradeAssistantExtension.class' in jar.namelist(), 'JAR entrypoint class missing')
         props = jar.read('META-INF/maven/io.github.wouthh/g-earth-trade-assistant/pom.properties').decode().splitlines()
         check([line for line in props if line.startswith('version=')] == ['version=' + version], 'JAR version differs from expected version')
+        if tuple(map(int, version.split('.'))) >= (0, 1, 1):
+            name = 'META-INF/tradeassistant-build.properties'
+            check(jar.namelist().count(name) == 1, 'JAR build provenance missing or ambiguous')
+            entry = jar.getinfo(name); check(entry.file_size <= 4096, 'JAR build provenance too large')
+            provenance = jar.read(name).decode().splitlines()
+            source = [line.removeprefix('source=') for line in provenance if line.startswith('source=')]
+            check(len(source) == 1 and REVISION.fullmatch(source[0])
+                  and (revision is None or source[0] == revision), 'JAR committed source differs or is unverified')
+            check([line for line in provenance if line.startswith('version=')] == ['version=' + version], 'JAR build version differs')
         check(jar.testzip() is None, 'corrupt JAR')
 
 

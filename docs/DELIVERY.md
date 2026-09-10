@@ -13,7 +13,7 @@ see [PROTOCOL.md](PROTOCOL.md). Guidance or installer changes that do not change
 the extension runtime do not require a new product version.
 
 Start with a clean, committed, reviewed source revision. Run `python3
-scripts/bootstrap.py`, `./mvnw clean verify`, `python3 -m unittest discover -s
+scripts/bootstrap.py`, `python3 scripts/build.py`, `python3 -m unittest discover -s
 scripts -p 'test_*.py'`, `python3 scripts/check-public.py` and `git diff --check`.
 The bootstrap verifies the pinned public API source; it is not an installation
 step. Use an isolated cache and synthetic state. Run the packaged offline smoke
@@ -24,8 +24,8 @@ The ZIP owns exactly `command.txt`, `extension/G-Earth-Trade-Assistant.jar`,
 `README.md`, `LICENSE` and `THIRD-PARTY-NOTICES.md` beneath its versioned folder.
 Record the source commit, dependency/API pin, toolchain, commands, test results,
 artifact SHA-256 values and member hashes. The verifier checks structure, hashes,
-version and entry point; its `--source` argument is an attested build identity,
-not proof of compilation ancestry. Bind it to the fresh build receipt above.
+version and entry point; the embedded source revision is produced by the clean-commit build wrapper.
+Bind the package hash and source revision to the fresh build receipt above.
 
 ## Existing mapped installation
 
@@ -127,3 +127,39 @@ Java command and literal host placeholders before any install or rollback. Keep
 retained bytes exact; an unverified previous command is refused, never rewritten
 as rollback evidence. Wine path lookup uses the unique actual case-insensitive
 entry and still refuses ambiguous siblings.
+
+
+## Passive loaded identity
+
+Version 0.1.1 writes `runtime-identity.json` in the existing app-owned state
+folder after the host initializes the extension. It uses the same state lock and
+atomic persistence as other local state, outside the managed extension package.
+The receipt contains only product/source/artifact identities, the Java executable
+hash, PID, process start instant and `loaded` or `stopped` lifecycle state. It
+contains no paths, command arguments, credentials, account or game data. Normal
+close writes `stopped`; abrupt termination may leave the old receipt intact.
+Neither startup nor verification arms, resumes or sends anything to a hotel.
+
+Run the verified package's Java 21 entry point as:
+
+```
+java -jar <verified-jar> --verify-loaded <runtime-identity.json> <expected-jar> <source-commit>
+```
+
+Use the same operating-system process namespace/runtime as the extension (the
+same Wine prefix for a Windows JVM). The bounded read-only verifier correlates
+receipt schema, expected JAR hash and embedded provenance, live PID/start instant,
+and executable hash, then rechecks process liveness and receipt stability. It
+never reads process arguments. Exit 0 means this process identity was alive at
+verification, not that the extension is connected, healthy or armed. A missing,
+stopped, malformed, stale, PID-reused or mismatched receipt exits 2. Unsupported
+process diagnostics leave loaded identity unverified; never infer success from
+the startup file alone. Native Windows/Wine validation remains a separate target.
+
+`python3 scripts/build.py` refuses dirty/untracked source, embeds the exact clean
+commit through Maven resource filtering and checks the source again afterward.
+It does not edit tracked source or create a self-referential commit field. Plain
+`./mvnw clean verify` remains a development gate; its default `unverified` build
+provenance deliberately cannot emit a verified runtime receipt. Retain source,
+recipe, toolchain and artifact fingerprints with delivery builds. Stop other
+writers before packaging; observed clean-tree checks are not atomic isolation.

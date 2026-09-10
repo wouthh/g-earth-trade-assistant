@@ -25,7 +25,7 @@ jobs:
       - name: Build pinned public API
         run: python3 scripts/bootstrap.py
       - name: Verify and package without account access
-        run: ./mvnw -B clean verify
+        run: python3 scripts/build.py
       - name: Audit public source
         run: |
           python3 -m unittest discover -s scripts -p 'test_*.py'
@@ -34,7 +34,7 @@ jobs:
         with:
           name: g-earth-trade-assistant
           path: |
-            target/g-earth-trade-assistant-0.1.0.jar
-            target/G-Earth-Trade-Assistant-0.1.0-extension.zip
+            target/g-earth-trade-assistant-0.1.1.jar
+            target/G-Earth-Trade-Assistant-0.1.1-extension.zip
           if-no-files-found: error
           retention-days: 14

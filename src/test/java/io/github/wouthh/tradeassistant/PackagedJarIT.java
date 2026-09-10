@@ -15,7 +15,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 class PackagedJarIT {
     @TempDir Path temp;
-    final Path jar = Path.of("target/g-earth-trade-assistant-0.1.0.jar").toAbsolutePath();
+    final Path jar = Path.of("target/g-earth-trade-assistant-0.1.1.jar").toAbsolutePath();
 
     Process launch(String... extra) throws IOException {
         var args = new java.util.ArrayList<String>();
@@ -53,8 +53,8 @@ class PackagedJarIT {
         } finally {
             process.destroyForcibly();
         }
-        try (ZipFile zip = new ZipFile("target/G-Earth-Trade-Assistant-0.1.0-extension.zip")) {
-            var command = zip.getEntry("G-Earth-Trade-Assistant-0.1.0/command.txt");
+        try (ZipFile zip = new ZipFile("target/G-Earth-Trade-Assistant-0.1.1-extension.zip")) {
+            var command = zip.getEntry("G-Earth-Trade-Assistant-0.1.1/command.txt");
             assertNotNull(command);
             String text =
                     new String(
@@ -64,14 +64,14 @@ class PackagedJarIT {
             assertTrue(text.contains("jre"));
             assertNotNull(
                     zip.getEntry(
-                            "G-Earth-Trade-Assistant-0.1.0/extension/G-Earth-Trade-Assistant.jar"));
+                            "G-Earth-Trade-Assistant-0.1.1/extension/G-Earth-Trade-Assistant.jar"));
         }
     }
 
     @Test
     void extractedFolderLaunchesFromTheHostsExtensionWorkingDirectory() throws Exception {
         Path extracted = temp.resolve("extracted");
-        try (ZipFile zip = new ZipFile("target/G-Earth-Trade-Assistant-0.1.0-extension.zip")) {
+        try (ZipFile zip = new ZipFile("target/G-Earth-Trade-Assistant-0.1.1-extension.zip")) {
             for (var entry : java.util.Collections.list(zip.entries())) {
                 Path destination = extracted.resolve(entry.getName()).normalize();
                 assertTrue(destination.startsWith(extracted));
@@ -85,7 +85,7 @@ class PackagedJarIT {
                 }
             }
         }
-        Path folder = extracted.resolve("G-Earth-Trade-Assistant-0.1.0");
+        Path folder = extracted.resolve("G-Earth-Trade-Assistant-0.1.1");
         var command = new org.json.JSONArray(Files.readString(folder.resolve("command.txt")));
         assertEquals("C:\\G-Earth\\jre\\bin\\java.exe", command.getString(0));
         var args = new java.util.ArrayList<String>();
@@ -140,7 +140,7 @@ class PackagedJarIT {
                     assertEquals(1, info.headerId());
                     assertEquals("G-Earth Trade Assistant", info.readString());
                     assertEquals("Wout H.", info.readString());
-                    assertEquals("0.1.0", info.readString());
+                    assertEquals("0.1.1", info.readString());
                     info.readString();
                     assertTrue(info.readBoolean());
                     assertTrue(info.readBoolean());
@@ -177,12 +177,51 @@ class PackagedJarIT {
                         }
                     }
                     assertTrue(returned);
+                    java.util.Properties build = new java.util.Properties();
+                    try (JarFile archive = new JarFile(jar.toFile());
+                            var provenance =
+                                    archive.getInputStream(
+                                            archive.getEntry(
+                                                    "META-INF/tradeassistant-build.properties"))) {
+                        build.load(provenance);
+                    }
+                    Path identity = temp.resolve("state/runtime-identity.json");
+                    if (build.getProperty("source").matches("[0-9a-f]{40}")) {
+                        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+                        while (!Files.exists(identity) && System.nanoTime() < deadline)
+                            Thread.sleep(10);
+                        assertTrue(
+                                Files.exists(identity),
+                                "Verified packaged runtime did not publish identity");
+                        var evidence =
+                                io.github.wouthh.tradeassistant.runtime.LoadedIdentity.verify(
+                                        identity, jar, build.getProperty("source"));
+                        assertTrue(evidence.getBoolean("loaded"));
+                        String receipt = Files.readString(identity);
+                        assertFalse(receipt.contains("synthetic-cookie"));
+                        assertFalse(receipt.contains(temp.toString()));
+                    } else {
+                        assertEquals("unverified", build.getProperty("source"));
+                        assertFalse(
+                                Files.exists(identity),
+                                "Development build claimed verified provenance");
+                    }
                     output.write(new HPacket(6).toBytes());
                 }
                 assertTrue(
                         process.waitFor(8, TimeUnit.SECONDS),
                         "Packaged process failed to shut down");
                 assertEquals(0, process.exitValue());
+                Path identity = temp.resolve("state/runtime-identity.json");
+                if (Files.exists(identity)) {
+                    var receipt = new org.json.JSONObject(Files.readString(identity));
+                    assertEquals("stopped", receipt.getString("state"));
+                    assertThrows(
+                            Exception.class,
+                            () ->
+                                    io.github.wouthh.tradeassistant.runtime.LoadedIdentity.verify(
+                                            identity, jar, receipt.getString("source")));
+                }
             } finally {
                 process.destroyForcibly();
             }

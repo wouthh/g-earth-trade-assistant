@@ -2,10 +2,11 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>io.github.wouthh</groupId>
   <artifactId>g-earth-trade-assistant</artifactId>
-  <version>0.1.0</version>
+  <version>0.1.1</version>
   <name>G-Earth Trade Assistant</name>
   <properties>
     <maven.compiler.release>21</maven.compiler.release>
+    <tradeassistant.sourceRevision>unverified</tradeassistant.sourceRevision>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.build.outputTimestamp>2026-09-06T00:00:00Z</project.build.outputTimestamp>
   </properties>
@@ -26,6 +27,12 @@
     <resources>
       <resource>
         <directory>src/main/resources</directory>
+        <excludes><exclude>META-INF/tradeassistant-build.properties</exclude></excludes>
+      </resource>
+      <resource>
+        <directory>src/main/resources</directory>
+        <filtering>true</filtering>
+        <includes><include>META-INF/tradeassistant-build.properties</include></includes>
       </resource>
       <resource>
         <directory>${project.basedir}</directory>
@@ -113,7 +120,7 @@
           <descriptors>
             <descriptor>packaging/assembly.xml</descriptor>
           </descriptors>
-          <finalName>G-Earth-Trade-Assistant-0.1.0</finalName>
+          <finalName>G-Earth-Trade-Assistant-${project.version}</finalName>
         </configuration>
         <executions>
           <execution>

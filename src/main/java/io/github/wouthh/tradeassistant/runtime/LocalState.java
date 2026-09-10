@@ -209,6 +209,13 @@ public final class LocalState implements Journal, AutoCloseable {
         atomic(directory.resolve("previous-" + UUID.randomUUID() + ".json"), bytes);
     }
 
+    void runtimeIdentity(String text) throws IOException {
+        if (text.length() > 4096) throw new IOException("Identity receipt exceeds its bound");
+        Path receipt = directory.resolve("runtime-identity.json");
+        if (Files.exists(receipt, LinkOption.NOFOLLOW_LINKS)) LoadedIdentity.read(receipt);
+        atomic(receipt, text);
+    }
+
     private void atomic(Path destination, String text) throws IOException {
         atomic(destination, text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
