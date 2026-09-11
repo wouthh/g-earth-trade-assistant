@@ -5,6 +5,12 @@ Linux renameat2 exchanges complete directories atomically. A private receipt
 binds both inventories, allowing retries to identify either side of an interrupted
 exchange. Application state lives elsewhere and is never opened here.
 """
+# Only builtins run before isolation; recipe-local modules/bytecode cannot shadow imports.
+import sys
+if __name__ == '__main__' and not (sys.flags.isolated and sys.dont_write_bytecode):
+    _native_os = __import__('posix' if 'posix' in sys.builtin_module_names else 'nt')
+    _native_os.execv(sys.executable, [sys.executable, '-I', '-B', __file__, *sys.argv[1:]])
+
 import argparse
 import contextlib
 import ctypes
@@ -16,7 +22,6 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import stat
 import struct
-import sys
 import zipfile
 import zlib
 
@@ -331,13 +336,13 @@ def read_package(path, checksum, revision):
     check(isinstance(command, list) and len(command) == 9 and isinstance(command[0], str)
           and command[1:] == ['-jar', 'G-Earth-Trade-Assistant.jar', '-p', '{port}', '-f', '{filename}', '-c', '{cookie}'],
           'launcher placeholders or layout differ')
-    verify_jar(payload['extension/G-Earth-Trade-Assistant.jar'], version)
+    verify_jar(payload['extension/G-Earth-Trade-Assistant.jar'], version, revision)
     return {'schema': 1, 'component': 'g-earth-trade-assistant', 'source_revision': revision,
             'version': version, 'package_sha256': checksum,
             'files': {name: sha(data) for name, data in payload.items()}}, payload
 
 
-def verify_jar(data, version):
+def verify_jar(data, version, revision=None):
     check(len(data) <= LIMIT, 'JAR size limit')
     with zipfile.ZipFile(io.BytesIO(data)) as jar:
         verify_local_headers(jar, data)
@@ -355,6 +360,18 @@ def verify_jar(data, version):
         check('io/github/wouthh/tradeassistant/protocol/TradeAssistantExtension.class' in jar.namelist(), 'JAR entrypoint class missing')
         props = jar.read('META-INF/maven/io.github.wouthh/g-earth-trade-assistant/pom.properties').decode().splitlines()
         check([line for line in props if line.startswith('version=')] == ['version=' + version], 'JAR version differs from expected version')
+        if tuple(map(int, version.split('.'))) >= (0, 1, 1):
+            name = 'META-INF/tradeassistant-build.properties'
+            check(jar.namelist().count(name) == 1, 'JAR build provenance missing or ambiguous')
+            entry = jar.getinfo(name); check(entry.file_size <= 4096, 'JAR build provenance too large')
+            # The build emits exactly these two ASCII lines. Reject Properties.load
+            # escapes, aliases, continuations and duplicate/unknown keys rather than
+            # letting the runtime interpret different metadata from the verifier.
+            provenance = jar.read(name).decode('ascii')
+            fields = re.fullmatch(r'source=([0-9a-f]{40})\r?\nversion=([0-9]+\.[0-9]+\.[0-9]+)\r?\n?', provenance)
+            check(fields is not None, 'JAR build provenance is noncanonical')
+            check(revision is None or fields[1] == revision, 'JAR committed source differs or is unverified')
+            check(fields[2] == version, 'JAR build version differs')
         check(jar.testzip() is None, 'corrupt JAR')
 
 

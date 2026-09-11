@@ -12,9 +12,9 @@ pinned G-Earth API revision and required Java 21 runtime are separate identities
 see [PROTOCOL.md](PROTOCOL.md). Guidance or installer changes that do not change
 the extension runtime do not require a new product version.
 
-Start with a clean, committed, reviewed source revision. Run `python3
-scripts/bootstrap.py`, `./mvnw clean verify`, `python3 -m unittest discover -s
-scripts -p 'test_*.py'`, `python3 scripts/check-public.py` and `git diff --check`.
+Start with a clean, committed, reviewed source revision. Run `python3 -I -B
+scripts/bootstrap.py`, `python3 -I -B scripts/build.py`, `python3 -I -B -m unittest discover -s
+scripts -p 'test_*.py'`, `python3 -I -B scripts/check-public.py` and `git diff --check`.
 The bootstrap verifies the pinned public API source; it is not an installation
 step. Use an isolated cache and synthetic state. Run the packaged offline smoke
 with `java -jar target/g-earth-trade-assistant-<version>.jar --demo`.
@@ -24,8 +24,8 @@ The ZIP owns exactly `command.txt`, `extension/G-Earth-Trade-Assistant.jar`,
 `README.md`, `LICENSE` and `THIRD-PARTY-NOTICES.md` beneath its versioned folder.
 Record the source commit, dependency/API pin, toolchain, commands, test results,
 artifact SHA-256 values and member hashes. The verifier checks structure, hashes,
-version and entry point; its `--source` argument is an attested build identity,
-not proof of compilation ancestry. Bind it to the fresh build receipt above.
+version and entry point; the embedded source revision is produced by the clean-commit build wrapper.
+Bind the package hash and source revision to the fresh build receipt above.
 
 ## Existing mapped installation
 
@@ -58,7 +58,7 @@ Keep machine paths, host descriptors
 and receipts private. No profile databases, journals or expanded authentication
 arguments belong in a receipt or repository.
 
-Invoke `python3 scripts/deliver.py verify --package <absolute-zip> --sha256
+Invoke `python3 -I -B scripts/deliver.py verify --package <absolute-zip> --sha256
 <sha256> --source <40-character-commit>`. For installation, replace `verify` with
 `install` and add `--descriptor <absolute-json>`; first add `--dry-run`. Preview
 uses the same identity, writer-lock, inventory and recovery guards as execution.
@@ -127,3 +127,74 @@ Java command and literal host placeholders before any install or rollback. Keep
 retained bytes exact; an unverified previous command is refused, never rewritten
 as rollback evidence. Wine path lookup uses the unique actual case-insensitive
 entry and still refuses ambiguous siblings.
+
+
+## Passive loaded identity
+
+Version 0.1.1 writes `runtime-identity.json` in the existing app-owned state
+folder after the host initializes the extension. It uses the same state lock and
+atomic persistence as other local state, outside the managed extension package.
+The receipt contains only product/source/artifact identities, the Java executable
+hash, PID, process start instant and `loaded` or `stopped` lifecycle state. It
+contains no paths, command arguments, credentials, account or game data. Normal
+close writes `stopped`; abrupt termination may leave the old receipt intact.
+Neither startup nor verification arms, resumes or sends anything to a hotel.
+
+Run the verified package's Java 21 entry point as:
+
+```
+java -jar <verified-jar> --verify-loaded <runtime-identity.json> <expected-jar> <source-commit>
+```
+
+Use the same operating-system process namespace/runtime as the extension (the
+same Wine prefix for a Windows JVM). The bounded read-only verifier correlates
+receipt schema, expected JAR hash and embedded provenance, live PID/start instant,
+and executable hash, then rechecks process liveness and receipt stability. It
+never reads process arguments. Exit 0 means this process identity was alive at
+verification, not that the extension is connected, healthy or armed. A missing,
+stopped, malformed, stale, PID-reused or mismatched receipt exits 2. Unsupported
+process diagnostics leave loaded identity unverified; never infer success from
+the startup file alone. Native Windows/Wine validation remains a separate target.
+State creation keeps inherited Windows ACLs and skips POSIX-only volume queries
+on providers without that attribute view. POSIX state permissions remain private.
+
+Normal packaged startup loads the extension runtime, API dependencies and resources
+from one bounded in-memory archive snapshot. The receipt hashes those same bytes;
+atomic replacement of the original pathname cannot change already loaded or later
+loaded runtime classes and resources. The JDK and small bootstrap loader are trusted
+prerequisites, outside the extension snapshot's loaded-code claim. Generic loaders
+cannot emit verified loaded receipts. External manifest classpaths and multi-release
+loading are refused; the canonical shaded package requires neither. Demo and
+verification commands still return before constructing or connecting the extension.
+Build provenance uses exactly two canonical ASCII fields; escaped, duplicate or
+unknown keys cannot make the runtime and installer interpret different identities.
+
+`python3 -I -B scripts/build.py` refuses dirty/untracked source, embeds the exact clean
+commit through Maven resource filtering and checks the source again afterward.
+It also refuses ignored files under Maven's source/resource, wrapper, API recipe
+and assembly input trees, plus Python recipe files and bytecode under `scripts/`;
+Git's ordinary clean status does not cover those files.
+Tracked `skip-worktree` or `assume-unchanged` entries are refused as well: sparse
+or hidden index state can conceal missing resources or tests from ordinary status.
+The preflight preserves those files and index flags; use a complete separate checkout.
+Guarded Git reads disable fsmonitor for that command and optional index refreshes:
+a stale monitor cannot hide changed source, no monitor hook is invoked, and the
+caller's monitor configuration and index are preserved.
+Build and history reads also disable Git replacement objects. Local replacement
+refs cannot substitute different source bytes or conceal original published
+identities; replacement refs, index and working files remain untouched.
+Refused inputs are preserved. Root `.build/` caches and `target/` output are separate
+from these source trees and remain subject to the pinned bootstrap/build checks.
+Each Python CLI re-executes itself with `-I -B` using only built-in modules before
+standard-library imports. Ordinary `python3 scripts/<tool>.py` calls still work;
+recipe-local modules and legacy bytecode never enter those import paths. Library
+imports retain their caller's semantics; run tests only after source preflight,
+with `-I -B` to avoid generating recipe bytecode. Existing script caches are
+preserved and refused; use a fresh isolated checkout instead of deleting them.
+This protects against local recipe shadowing, not an untrusted interpreter,
+site configuration or build toolchain.
+It does not edit tracked source or create a self-referential commit field. Plain
+`./mvnw clean verify` remains a development gate; its default `unverified` build
+provenance deliberately cannot emit a verified runtime receipt. Retain source,
+recipe, toolchain and artifact fingerprints with delivery builds. Stop other
+writers before packaging; observed clean-tree checks are not atomic isolation.

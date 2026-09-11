@@ -19,16 +19,38 @@ TOP = 'G-Earth-Trade-Assistant-' + VERSION
 COMMAND = ['java21', '-jar', 'G-Earth-Trade-Assistant.jar', '-p', '{port}', '-f', '{filename}', '-c', '{cookie}']
 
 
-def synthetic_jar(version=VERSION):
+def synthetic_jar(version=VERSION, source=SOURCE):
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w') as jar:
         jar.writestr('io/github/wouthh/tradeassistant/protocol/TradeAssistantExtension.class', b'synthetic class')
         jar.writestr('META-INF/MANIFEST.MF', 'Main-Class: io.github.wouthh.tradeassistant.protocol.TradeAssistantExtension\n')
         jar.writestr('META-INF/maven/io.github.wouthh/g-earth-trade-assistant/pom.properties', 'version=' + version + '\n')
+        if version != '0.1.0':
+            jar.writestr('META-INF/tradeassistant-build.properties', 'source=' + source + '\nversion=' + version + '\n')
     return buffer.getvalue()
 
 
 class PackageTests(unittest.TestCase):
+    def test_provenance_rejects_properties_aliases_duplicates_and_unknown_fields(self):
+        canonical = 'source=' + SOURCE + '\nversion=0.1.1\n'
+        for extra in ('vers\\u0069on=9.9.9\n', 'source : ' + 'b' * 40 + '\n',
+                      'version=0.1.1\n', 'unknown=value\n', ' version=9.9.9\n'):
+            with self.subTest(extra=extra):
+                output = io.BytesIO()
+                with zipfile.ZipFile(io.BytesIO(synthetic_jar('0.1.1'))) as jar, \
+                        zipfile.ZipFile(output, 'w') as changed:
+                    for name in jar.namelist():
+                        changed.writestr(name, canonical + extra if name.endswith(
+                            'tradeassistant-build.properties') else jar.read(name))
+                with self.assertRaises(d.Refused):
+                    d.verify_jar(output.getvalue(), '0.1.1', SOURCE)
+
+    def test_new_runtime_requires_exact_committed_source_provenance(self):
+        d.verify_jar(synthetic_jar('0.1.1'), '0.1.1', SOURCE)
+        for source in ('unverified', 'b' * 40):
+            with self.subTest(source=source), self.assertRaises(d.Refused):
+                d.verify_jar(synthetic_jar('0.1.1', source), '0.1.1', SOURCE)
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)

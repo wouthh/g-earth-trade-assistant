@@ -23,18 +23,18 @@ jobs:
         with:
           python-version: '3.12'
       - name: Build pinned public API
-        run: python3 scripts/bootstrap.py
+        run: python3 -I -B scripts/bootstrap.py
       - name: Verify and package without account access
-        run: ./mvnw -B clean verify
+        run: python3 -I -B scripts/build.py
       - name: Audit public source
         run: |
-          python3 -m unittest discover -s scripts -p 'test_*.py'
-          python3 scripts/check-public.py
+          python3 -I -B -m unittest discover -s scripts -p 'test_*.py'
+          python3 -I -B scripts/check-public.py
       - uses: actions/upload-artifact@v4
         with:
           name: g-earth-trade-assistant
           path: |
-            target/g-earth-trade-assistant-0.1.0.jar
-            target/G-Earth-Trade-Assistant-0.1.0-extension.zip
+            target/g-earth-trade-assistant-0.1.1.jar
+            target/G-Earth-Trade-Assistant-0.1.1-extension.zip
           if-no-files-found: error
           retention-days: 14

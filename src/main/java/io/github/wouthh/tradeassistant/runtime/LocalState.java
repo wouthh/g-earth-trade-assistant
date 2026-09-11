@@ -209,6 +209,13 @@ public final class LocalState implements Journal, AutoCloseable {
         atomic(directory.resolve("previous-" + UUID.randomUUID() + ".json"), bytes);
     }
 
+    void runtimeIdentity(String text) throws IOException {
+        if (text.length() > 4096) throw new IOException("Identity receipt exceeds its bound");
+        Path receipt = directory.resolve("runtime-identity.json");
+        if (Files.exists(receipt, LinkOption.NOFOLLOW_LINKS)) LoadedIdentity.read(receipt);
+        atomic(receipt, text);
+    }
+
     private void atomic(Path destination, String text) throws IOException {
         atomic(destination, text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
@@ -251,7 +258,10 @@ public final class LocalState implements Journal, AutoCloseable {
     }
 
     private static void privatePermissions(Path p, boolean dir) throws IOException {
-        if (Files.getFileStore(p).supportsFileAttributeView("posix"))
+        // Windows providers have no POSIX view; asking Wine for a volume store
+        // can fail before that capability is checked. Preserve inherited ACLs.
+        if (p.getFileSystem().supportedFileAttributeViews().contains("posix")
+                && Files.getFileStore(p).supportsFileAttributeView("posix"))
             Files.setPosixFilePermissions(
                     p, PosixFilePermissions.fromString(dir ? "rwx------" : "rw-------"));
     }

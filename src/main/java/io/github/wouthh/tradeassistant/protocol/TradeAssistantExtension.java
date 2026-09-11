@@ -19,7 +19,7 @@ import javax.swing.*;
 @ExtensionInfo(
         Title = "G-Earth Trade Assistant",
         Author = "Wout H.",
-        Version = "0.1.0",
+        Version = "0.1.1",
         Description = "Explicitly armed Origins bronze conversion; purchasing unavailable.")
 public final class TradeAssistantExtension extends Extension implements AutoCloseable {
     private final SafetyGate gate = new SafetyGate();
@@ -32,6 +32,7 @@ public final class TradeAssistantExtension extends Extension implements AutoClos
     private volatile Snapshot latest;
     private volatile AssistantWindow window;
     private final String recoverySummary;
+    private LoadedIdentity loadedIdentity;
 
     public TradeAssistantExtension(String[] args) throws IOException {
         super(args);
@@ -191,7 +192,23 @@ public final class TradeAssistantExtension extends Extension implements AutoClos
     @Override
     public void initExtension() {
         gate.invalidate();
-        runtime.execute(() -> engine.on(new ContextLost()));
+        runtime.execute(
+                () -> {
+                    if (closed.get()) return;
+                    engine.on(new ContextLost());
+                    if (loadedIdentity == null) {
+                        try {
+                            loadedIdentity =
+                                    LoadedIdentity.start(store, TradeAssistantExtension.class);
+                        } catch (LoadedIdentity.UnverifiedBuild ignored) {
+                            System.err.println(
+                                    "Loaded identity unverified for this development build.");
+                        } catch (Exception ignored) {
+                            System.err.println(
+                                    "Loaded identity unavailable; verification remains pending.");
+                        }
+                    }
+                });
         onClick();
     }
 
@@ -255,6 +272,12 @@ public final class TradeAssistantExtension extends Extension implements AutoClos
                 () -> {
                     engine.disconnected();
                     try {
+                        if (loadedIdentity != null) loadedIdentity.close();
+                    } catch (IOException ignored) {
+                        // A stale receipt cannot pass the live process verifier after exit.
+                        System.err.println("Shutdown identity unavailable; verify process state.");
+                    }
+                    try {
                         store.close();
                     } catch (IOException ignored) {
                         /* Journal already reports failures. */
@@ -265,10 +288,27 @@ public final class TradeAssistantExtension extends Extension implements AutoClos
     }
 
     public static void main(String[] args) throws Exception {
+        if (args.length > 0 && args[0].equals("--verify-loaded")) {
+            if (args.length != 4)
+                throw new IllegalArgumentException(
+                        "Expected receipt, artifact and source revision");
+            try {
+                System.out.println(
+                        LoadedIdentity.verify(
+                                java.nio.file.Path.of(args[1]),
+                                java.nio.file.Path.of(args[2]),
+                                args[3]));
+            } catch (Exception ignored) {
+                System.err.println("Loaded identity could not be verified.");
+                System.exit(2);
+            }
+            return;
+        }
         if (Arrays.asList(args).contains("--demo")) {
             OfflineDemo.main(args);
             return;
         }
+        if (SnapshotClassLoader.launchIfNeeded(TradeAssistantExtension.class, args)) return;
         try (TradeAssistantExtension extension = new TradeAssistantExtension(args)) {
             extension.run();
         }
