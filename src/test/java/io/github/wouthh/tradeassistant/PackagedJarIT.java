@@ -17,6 +17,74 @@ class PackagedJarIT {
     @TempDir Path temp;
     final Path jar = Path.of("target/g-earth-trade-assistant-0.1.1.jar").toAbsolutePath();
 
+    @Test
+    void replacedPathCannotBeAttestedAsTheExecutingSnapshot() throws Exception {
+        Path installed = Files.createDirectory(temp.resolve("installed"));
+        Path a = installed.resolve("a.jar");
+        Path b = installed.resolve("b.jar");
+        for (Path destination : new Path[] {a, b}) {
+            String source = (destination.equals(a) ? "a" : "b").repeat(40);
+            try (var original = new JarFile(jar.toFile());
+                    var output =
+                            new java.util.jar.JarOutputStream(Files.newOutputStream(destination))) {
+                for (var entry : java.util.Collections.list(original.entries())) {
+                    output.putNextEntry(new java.util.jar.JarEntry(entry.getName()));
+                    if (entry.getName().equals("META-INF/tradeassistant-build.properties"))
+                        output.write(
+                                ("source=" + source + "\nversion=0.1.1\n")
+                                        .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    else
+                        try (var input = original.getInputStream(entry)) {
+                            input.transferTo(output);
+                        }
+                    output.closeEntry();
+                }
+            }
+        }
+        Path retained = Files.copy(a, installed.resolve("retained-a.jar"));
+        var loader = new io.github.wouthh.tradeassistant.runtime.SnapshotClassLoader(a);
+        Class<?> anchor =
+                loader.loadClass(
+                        "io.github.wouthh.tradeassistant.protocol.TradeAssistantExtension");
+        // The archive pathname changes after the runtime class has been loaded.
+        Files.move(b, a, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        Class<?> stateType = loader.loadClass("io.github.wouthh.tradeassistant.runtime.LocalState");
+        Class<?> identityType =
+                loader.loadClass("io.github.wouthh.tradeassistant.runtime.LoadedIdentity");
+        String previous = System.getProperty("tradeassistant.stateDir");
+        Path stateDirectory = temp.resolve("state");
+        System.setProperty("tradeassistant.stateDir", stateDirectory.toString());
+        try (var state =
+                (AutoCloseable) stateType.getConstructor(Path.class).newInstance(stateDirectory)) {
+            try (var identity =
+                    (AutoCloseable)
+                            identityType
+                                    .getMethod("start", stateType, Class.class)
+                                    .invoke(null, state, anchor)) {
+                Path receipt = stateDirectory.resolve("runtime-identity.json");
+                var evidence =
+                        io.github.wouthh.tradeassistant.runtime.LoadedIdentity.verify(
+                                receipt, retained, "a".repeat(40));
+                assertTrue(evidence.getBoolean("loaded"));
+                assertThrows(
+                        Exception.class,
+                        () ->
+                                io.github.wouthh.tradeassistant.runtime.LoadedIdentity.verify(
+                                        receipt, a, "b".repeat(40)));
+                assertFalse(Files.readString(receipt).contains(temp.toString()));
+            }
+            assertEquals(
+                    "stopped",
+                    new org.json.JSONObject(
+                                    Files.readString(
+                                            stateDirectory.resolve("runtime-identity.json")))
+                            .getString("state"));
+        } finally {
+            if (previous == null) System.clearProperty("tradeassistant.stateDir");
+            else System.setProperty("tradeassistant.stateDir", previous);
+        }
+    }
+
     Process launch(String... extra) throws IOException {
         var args = new java.util.ArrayList<String>();
         args.add(Path.of(System.getProperty("java.home"), "bin", "java").toString());

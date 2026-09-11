@@ -158,6 +158,17 @@ the startup file alone. Native Windows/Wine validation remains a separate target
 State creation keeps inherited Windows ACLs and skips POSIX-only volume queries
 on providers without that attribute view. POSIX state permissions remain private.
 
+Normal packaged startup loads the extension runtime, API dependencies and resources
+from one bounded in-memory archive snapshot. The receipt hashes those same bytes;
+atomic replacement of the original pathname cannot change already loaded or later
+loaded runtime classes and resources. The JDK and small bootstrap loader are trusted
+prerequisites, outside the extension snapshot's loaded-code claim. Generic loaders
+cannot emit verified loaded receipts. External manifest classpaths and multi-release
+loading are refused; the canonical shaded package requires neither. Demo and
+verification commands still return before constructing or connecting the extension.
+Build provenance uses exactly two canonical ASCII fields; escaped, duplicate or
+unknown keys cannot make the runtime and installer interpret different identities.
+
 `python3 -I -B scripts/build.py` refuses dirty/untracked source, embeds the exact clean
 commit through Maven resource filtering and checks the source again afterward.
 It also refuses ignored files under Maven's source/resource, wrapper, API recipe
@@ -169,6 +180,9 @@ The preflight preserves those files and index flags; use a complete separate che
 Guarded Git reads disable fsmonitor for that command and optional index refreshes:
 a stale monitor cannot hide changed source, no monitor hook is invoked, and the
 caller's monitor configuration and index are preserved.
+Build and history reads also disable Git replacement objects. Local replacement
+refs cannot substitute different source bytes or conceal original published
+identities; replacement refs, index and working files remain untouched.
 Refused inputs are preserved. Root `.build/` caches and `target/` output are separate
 from these source trees and remain subject to the pinned bootstrap/build checks.
 Each Python CLI re-executes itself with `-I -B` using only built-in modules before

@@ -14,6 +14,16 @@ class LoadedIdentityTest {
     @TempDir Path temp;
     private static final String SOURCE = "a".repeat(40);
 
+    @Test
+    void genericLoaderCannotPublishLoadedArtifactEvidence() throws Exception {
+        try (LocalState state = new LocalState(temp)) {
+            assertThrows(
+                    LoadedIdentity.UnverifiedBuild.class,
+                    () -> LoadedIdentity.start(state, LoadedIdentityTest.class));
+            assertFalse(Files.exists(temp.resolve("runtime-identity.json")));
+        }
+    }
+
     private Path artifact() throws Exception {
         Path jar = temp.resolve("fixture.jar");
         try (var output = new JarOutputStream(Files.newOutputStream(jar))) {

@@ -31,6 +31,20 @@ def synthetic_jar(version=VERSION, source=SOURCE):
 
 
 class PackageTests(unittest.TestCase):
+    def test_provenance_rejects_properties_aliases_duplicates_and_unknown_fields(self):
+        canonical = 'source=' + SOURCE + '\nversion=0.1.1\n'
+        for extra in ('vers\\u0069on=9.9.9\n', 'source : ' + 'b' * 40 + '\n',
+                      'version=0.1.1\n', 'unknown=value\n', ' version=9.9.9\n'):
+            with self.subTest(extra=extra):
+                output = io.BytesIO()
+                with zipfile.ZipFile(io.BytesIO(synthetic_jar('0.1.1'))) as jar, \
+                        zipfile.ZipFile(output, 'w') as changed:
+                    for name in jar.namelist():
+                        changed.writestr(name, canonical + extra if name.endswith(
+                            'tradeassistant-build.properties') else jar.read(name))
+                with self.assertRaises(d.Refused):
+                    d.verify_jar(output.getvalue(), '0.1.1', SOURCE)
+
     def test_new_runtime_requires_exact_committed_source_provenance(self):
         d.verify_jar(synthetic_jar('0.1.1'), '0.1.1', SOURCE)
         for source in ('unverified', 'b' * 40):

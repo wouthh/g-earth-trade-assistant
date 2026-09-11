@@ -43,17 +43,16 @@ public final class LoadedIdentity implements AutoCloseable {
     }
 
     public static LoadedIdentity start(LocalState store, Class<?> anchor) throws Exception {
-        Path artifact = Path.of(anchor.getProtectionDomain().getCodeSource().getLocation().toURI());
-        if (!Files.isRegularFile(artifact, LinkOption.NOFOLLOW_LINKS))
-            throw new IOException("A packaged JAR is required for loaded identity");
-        Path packageRoot = artifact.toRealPath().getParent();
+        if (!(anchor.getClassLoader() instanceof SnapshotClassLoader snapshot)
+                || anchor.getClassLoader() != LoadedIdentity.class.getClassLoader())
+            throw new UnverifiedBuild();
+        Path packageRoot = snapshot.artifact().getParent();
         if (packageRoot.getFileName().toString().equals("extension"))
             packageRoot = packageRoot.getParent();
         if (LocalState.defaultDirectory().toRealPath().startsWith(packageRoot))
             throw new IOException("Identity state must be outside the package directory");
-        Properties build = metadata(artifact);
-        String source = build.getProperty("source", "");
-        String version = build.getProperty("version", "");
+        String source = snapshot.source();
+        String version = snapshot.version();
         if (!source.matches("[0-9a-f]{40}") || !version.matches("[0-9]+\\.[0-9]+\\.[0-9]+"))
             throw new UnverifiedBuild();
         ProcessHandle process = ProcessHandle.current();
@@ -64,7 +63,7 @@ public final class LoadedIdentity implements AutoCloseable {
                         .put("component", COMPONENT)
                         .put("version", version)
                         .put("source", source)
-                        .put("artifactSha256", digest(artifact))
+                        .put("artifactSha256", snapshot.artifactSha256())
                         .put("executableSha256", digest(Path.of(info.command().orElseThrow())))
                         .put("pid", process.pid())
                         .put("processStarted", info.startInstant().orElseThrow().toString())
@@ -111,7 +110,14 @@ public final class LoadedIdentity implements AutoCloseable {
                 byte[] bytes = input.readNBytes(4097);
                 if (bytes.length > 4096)
                     throw new IOException("Build provenance exceeds its bound");
-                properties.load(new java.io.ByteArrayInputStream(bytes));
+                String text = new String(bytes, java.nio.charset.StandardCharsets.US_ASCII);
+                var match =
+                        java.util.regex.Pattern.compile(
+                                        "source=([0-9a-f]{40})\\r?\\nversion=([0-9]+\\.[0-9]+\\.[0-9]+)\\r?\\n?")
+                                .matcher(text);
+                if (!match.matches()) throw new IOException("Build provenance is noncanonical");
+                properties.setProperty("source", match.group(1));
+                properties.setProperty("version", match.group(2));
             }
         }
         return properties;

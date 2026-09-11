@@ -10,6 +10,36 @@ import build
 
 
 class BuildIdentityTest(unittest.TestCase):
+    def test_replaced_commit_cannot_attest_different_worktree_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def git(*args):
+                return subprocess.check_output(['git', '-C', str(root), *args],
+                                               stderr=subprocess.PIPE)
+            git('init')
+            git('config', 'user.name', 'Fixture')
+            git('config', 'user.email', '1+fixture@users.noreply.github.com')
+            path = root / 'source.txt'
+            path.write_text('original committed bytes')
+            git('add', '.')
+            git('commit', '-m', 'Original')
+            original = git('rev-parse', 'HEAD').decode().strip()
+            path.write_text('replacement committed bytes')
+            git('add', '.')
+            git('commit', '-m', 'Replacement')
+            replacement = git('rev-parse', 'HEAD').decode().strip()
+            # Only this disposable repository is redirected; preserve its index/tree.
+            git('update-ref', 'HEAD', original)
+            git('replace', original, replacement)
+            self.assertEqual(b'', git('status', '--porcelain'))
+            index = (root / '.git/index').read_bytes()
+            refs = git('for-each-ref')
+            with self.assertRaisesRegex(ValueError, 'Commit the intended source'):
+                build.clean_revision(root)
+            self.assertEqual(index, (root / '.git/index').read_bytes())
+            self.assertEqual(refs, git('for-each-ref'))
+            self.assertEqual('replacement committed bytes', path.read_text())
+
     @unittest.skipUnless(os.name == 'posix', 'fixture hook uses a POSIX shell')
     def test_stale_fsmonitor_cannot_hide_modified_source_or_execute_in_preflight(self):
         with tempfile.TemporaryDirectory() as directory:

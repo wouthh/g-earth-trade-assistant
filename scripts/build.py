@@ -23,7 +23,8 @@ def clean_revision(root):
         # Rescan tracked files instead of trusting a stale fsmonitor result, and
         # do not execute its configured hook or refresh the caller's index.
         return subprocess.check_output(
-            ['git', '--no-optional-locks', '-c', 'core.fsmonitor=false', *args],
+            ['git', '--no-replace-objects', '--no-optional-locks',
+             '-c', 'core.fsmonitor=false', *args],
             cwd=root, text=True).strip()
     if git('status', '--porcelain', '--untracked-files=all'):
         raise ValueError('Commit the intended source before producing a delivery build')

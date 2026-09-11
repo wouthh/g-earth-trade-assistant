@@ -13,7 +13,8 @@ import subprocess
 root = Path(__file__).resolve().parent.parent
 def git(*args):
     return subprocess.check_output(
-        ['git', '--no-optional-locks', '-c', 'core.fsmonitor=false', *args], cwd=root)
+        ['git', '--no-replace-objects', '--no-optional-locks',
+         '-c', 'core.fsmonitor=false', *args], cwd=root)
 def public_commit_identity(identity):
     """Accept public author emails and GitHub's server-side merge committer."""
     author_name, author_email, committer_name, committer_email = identity

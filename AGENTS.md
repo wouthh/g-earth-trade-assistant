@@ -95,3 +95,8 @@ ignored script source or bytecode (including `__pycache__`) into delivery inputs
 Preserve refused inputs and use a fresh isolated checkout.
 Source guards disable Git fsmonitor per command and optional index refreshes;
 never trust a cached clean monitor result or invoke a checkout's monitor hook.
+Disable Git object replacement in build/history reads without editing replacement
+refs. Runtime receipts bind the immutable archive snapshot that actually defines
+extension classes and resources; a later pathname read is not loaded-byte evidence.
+Preserve platform/bootstrap separation, disarmed startup, and offline fake-host
+tests. Reject ambiguous provenance fields consistently in runtime and delivery.

@@ -308,6 +308,7 @@ public final class TradeAssistantExtension extends Extension implements AutoClos
             OfflineDemo.main(args);
             return;
         }
+        if (SnapshotClassLoader.launchIfNeeded(TradeAssistantExtension.class, args)) return;
         try (TradeAssistantExtension extension = new TradeAssistantExtension(args)) {
             extension.run();
         }

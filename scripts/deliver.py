@@ -364,11 +364,14 @@ def verify_jar(data, version, revision=None):
             name = 'META-INF/tradeassistant-build.properties'
             check(jar.namelist().count(name) == 1, 'JAR build provenance missing or ambiguous')
             entry = jar.getinfo(name); check(entry.file_size <= 4096, 'JAR build provenance too large')
-            provenance = jar.read(name).decode().splitlines()
-            source = [line.removeprefix('source=') for line in provenance if line.startswith('source=')]
-            check(len(source) == 1 and REVISION.fullmatch(source[0])
-                  and (revision is None or source[0] == revision), 'JAR committed source differs or is unverified')
-            check([line for line in provenance if line.startswith('version=')] == ['version=' + version], 'JAR build version differs')
+            # The build emits exactly these two ASCII lines. Reject Properties.load
+            # escapes, aliases, continuations and duplicate/unknown keys rather than
+            # letting the runtime interpret different metadata from the verifier.
+            provenance = jar.read(name).decode('ascii')
+            fields = re.fullmatch(r'source=([0-9a-f]{40})\r?\nversion=([0-9]+\.[0-9]+\.[0-9]+)\r?\n?', provenance)
+            check(fields is not None, 'JAR build provenance is noncanonical')
+            check(revision is None or fields[1] == revision, 'JAR committed source differs or is unverified')
+            check(fields[2] == version, 'JAR build version differs')
         check(jar.testzip() is None, 'corrupt JAR')
 
 
