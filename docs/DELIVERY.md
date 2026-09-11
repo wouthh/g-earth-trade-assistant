@@ -209,3 +209,7 @@ Archive setup and linkage/initialization failures return status 2 with a fixed
 message. Failures after invoking the initialized runtime entrypoint return
 status 3 with a distinct fixed message; exception details are never printed.
 The normal host launch, disconnected demo and read-only verifier use this route.
+
+Installer verification keeps the original entrypoint contract for retained 0.1.0
+and 0.1.1 packages so existing-installation checks and rollback remain usable.
+Version 0.1.2 and later require the JDK-only bootstrap and its class entry.
