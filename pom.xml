@@ -2,7 +2,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>io.github.wouthh</groupId>
   <artifactId>g-earth-trade-assistant</artifactId>
-  <version>0.1.2</version>
+  <version>0.1.3</version>
   <name>G-Earth Trade Assistant</name>
   <properties>
     <maven.compiler.release>21</maven.compiler.release>

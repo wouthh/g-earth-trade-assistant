@@ -24,7 +24,7 @@ import java.util.zip.ZipInputStream;
 
 /** Owns the exact bounded bytes used to load extension code and resources. */
 public final class SnapshotClassLoader extends SecureClassLoader {
-    private static final int LIMIT = 64_000_000;
+    private static final int LIMIT = 64 * 1024 * 1024;
     private static final Thread.UncaughtExceptionHandler FATAL_HANDLER =
             (thread, failure) -> {
                 if (!(failure instanceof ThreadDeath))

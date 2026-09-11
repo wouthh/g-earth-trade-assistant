@@ -219,3 +219,9 @@ remain archive failures even when first triggered lazily by runtime code. Fatal
 VM errors and thread termination propagate in either phase. A bootstrap-thread
 uncaught handler prints one fixed fatal diagnostic without exception details;
 thread termination stays silent.
+
+## Archive byte budget in 0.1.3
+
+Package verification, immutable archive loading and passive identity reads use
+the same 64 MiB (67,108,864-byte) archive limit. Expanded archive entries share
+that total budget. Exact-limit inputs are accepted; one byte over is refused.
