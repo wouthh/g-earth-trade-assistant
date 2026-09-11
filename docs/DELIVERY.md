@@ -238,3 +238,10 @@ canonical ZIP subset uses contiguous UTF-8 local entries, stored or deflated
 compression, and no ZIP64 or unsupported flags. Snapshot manifests use bounded
 Java-compatible header names (at most 70 ASCII bytes), physical lines of at most
 510 bytes, valid continuations and `Name`-led sections.
+
+The trusted JDK-only bootstrap includes its two named URL resource helpers.
+Both helpers are initialized before archive capture; later resource lookups read
+no additional bootstrap classfile from the mutable application JAR. Product/API
+classes remain snapshot-owned. An isolated packaged-bootstrap regression truncates
+and rewrites the same JAR inode without those helpers before its first resource
+lookup and verifies that captured resources remain readable.

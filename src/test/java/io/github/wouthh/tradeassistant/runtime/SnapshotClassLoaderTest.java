@@ -93,6 +93,88 @@ class SnapshotClassLoaderTest {
     }
 
     @Test
+    void inPlaceOverwriteCannotLazyLoadBootstrapResourceBytecode() throws Exception {
+        Path jar = archive("a");
+        String bootstrapName = SnapshotClassLoader.class.getName();
+        String bootstrapPath = bootstrapName.replace('.', '/');
+        Path classes =
+                Path.of(
+                        SnapshotClassLoader.class
+                                .getProtectionDomain()
+                                .getCodeSource()
+                                .getLocation()
+                                .toURI());
+        var original = new java.io.ByteArrayOutputStream();
+        try (var input = new java.util.jar.JarFile(jar.toFile());
+                var output = new JarOutputStream(original)) {
+            var all = input.entries();
+            while (all.hasMoreElements()) {
+                var entry = all.nextElement();
+                output.putNextEntry(new JarEntry(entry.getName()));
+                try (var bytes = input.getInputStream(entry)) {
+                    bytes.transferTo(output);
+                }
+                output.closeEntry();
+            }
+            try (var helpers = Files.list(classes.resolve(bootstrapPath).getParent())) {
+                for (Path helper :
+                        helpers.filter(
+                                        p ->
+                                                p.getFileName()
+                                                                .toString()
+                                                                .startsWith("SnapshotClassLoader")
+                                                        && p.getFileName()
+                                                                .toString()
+                                                                .endsWith(".class"))
+                                .toList()) {
+                    output.putNextEntry(
+                            new JarEntry(classes.relativize(helper).toString().replace('\\', '/')));
+                    output.write(Files.readAllBytes(helper));
+                    output.closeEntry();
+                }
+            }
+        }
+        Files.write(jar, original.toByteArray());
+        var replacement = new java.io.ByteArrayOutputStream();
+        try (var input =
+                        new java.util.jar.JarInputStream(
+                                new java.io.ByteArrayInputStream(original.toByteArray()));
+                var output = new JarOutputStream(replacement, input.getManifest())) {
+            java.util.jar.JarEntry entry;
+            while ((entry = input.getNextJarEntry()) != null) {
+                if (entry.getName().startsWith(bootstrapPath + "$")) continue;
+                output.putNextEntry(new JarEntry(entry.getName()));
+                input.transferTo(output);
+                output.closeEntry();
+            }
+        }
+        try (var application =
+                new java.net.URLClassLoader(
+                        new java.net.URL[] {jar.toUri().toURL()},
+                        ClassLoader.getPlatformClassLoader())) {
+            Class<?> bootstrap = application.loadClass(bootstrapName);
+            ClassLoader snapshot =
+                    (ClassLoader) bootstrap.getConstructor(Path.class).newInstance(jar);
+            Object before =
+                    Files.readAttributes(jar, java.nio.file.attribute.BasicFileAttributes.class)
+                            .fileKey();
+            Files.write(jar, replacement.toByteArray());
+            assertEquals(
+                    before,
+                    Files.readAttributes(jar, java.nio.file.attribute.BasicFileAttributes.class)
+                            .fileKey());
+            try (var input = snapshot.getResourceAsStream("fixture/value.txt")) {
+                assertNotNull(input);
+                assertEquals("a", new String(input.readAllBytes(), StandardCharsets.UTF_8));
+            }
+            try (var input =
+                    snapshot.getResources("fixture/value.txt").nextElement().openStream()) {
+                assertEquals("a", new String(input.readAllBytes(), StandardCharsets.UTF_8));
+            }
+        }
+    }
+
+    @Test
     void directoryPayloadCannotBypassTheExpansionBound() throws Exception {
         Path malicious = temp.resolve("directory-payload.jar");
         try (var output = new JarOutputStream(Files.newOutputStream(malicious))) {

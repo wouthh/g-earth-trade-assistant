@@ -43,6 +43,8 @@ public final class SnapshotClassLoader extends SecureClassLoader {
 
     public SnapshotClassLoader(Path path) throws Exception {
         super(ClassLoader.getPlatformClassLoader());
+        // Resolve every trusted resource helper before capturing mutable JAR bytes.
+        ResourceHandler.warmUp();
         if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
             throw new IOException("Snapshot requires a regular packaged JAR");
         artifact = path.toRealPath();
@@ -112,10 +114,11 @@ public final class SnapshotClassLoader extends SecureClassLoader {
 
     @Override
     protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
-        // One trusted JDK-only bootstrap type bridges the two loaders. No product,
+        // The eagerly loaded JDK-only bootstrap types bridge the two loaders. No product,
         // API or dependency class can fall back to the mutable application classpath.
         if (name.equals(SnapshotClassLoader.class.getName())
-                || name.startsWith(SnapshotClassLoader.class.getName() + "$"))
+                || name.equals(SnapshotClassLoader.class.getName() + "$ResourceHandler")
+                || name.equals(SnapshotClassLoader.class.getName() + "$ResourceConnection"))
             return SnapshotClassLoader.class.getClassLoader().loadClass(name);
         return super.loadClass(name, resolve);
     }
@@ -132,27 +135,49 @@ public final class SnapshotClassLoader extends SecureClassLoader {
         byte[] bytes = entries.get(name);
         if (bytes == null) return null;
         try {
-            return new URL(
-                    null,
-                    "snapshot:/" + name,
-                    new URLStreamHandler() {
-                        @Override
-                        protected URLConnection openConnection(URL url) {
-                            return new URLConnection(url) {
-                                @Override
-                                public void connect() {
-                                    connected = true;
-                                }
-
-                                @Override
-                                public InputStream getInputStream() {
-                                    return new ByteArrayInputStream(bytes);
-                                }
-                            };
-                        }
-                    });
+            return new URL(null, "snapshot:/" + name, new ResourceHandler(bytes));
         } catch (java.net.MalformedURLException e) {
             throw new IllegalArgumentException("Invalid snapshot resource", e);
+        }
+    }
+
+    private static final class ResourceHandler extends URLStreamHandler {
+        private final byte[] bytes;
+
+        static void warmUp() {
+            ResourceConnection.warmUp();
+        }
+
+        ResourceHandler(byte[] bytes) {
+            this.bytes = bytes;
+        }
+
+        @Override
+        protected URLConnection openConnection(URL url) {
+            return new ResourceConnection(url, bytes);
+        }
+    }
+
+    private static final class ResourceConnection extends URLConnection {
+        private final byte[] bytes;
+
+        static void warmUp() {
+            // Invocation initializes this trusted bootstrap type before capture.
+        }
+
+        ResourceConnection(URL url, byte[] bytes) {
+            super(url);
+            this.bytes = bytes;
+        }
+
+        @Override
+        public void connect() {
+            connected = true;
+        }
+
+        @Override
+        public InputStream getInputStream() {
+            return new ByteArrayInputStream(bytes);
         }
     }
 

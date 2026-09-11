@@ -19,7 +19,7 @@ import javax.swing.*;
 @ExtensionInfo(
         Title = "G-Earth Trade Assistant",
         Author = "Wout H.",
-        Version = "0.1.3",
+        Version = "0.1.4",
         Description = "Explicitly armed Origins bronze conversion; purchasing unavailable.")
 public final class TradeAssistantExtension extends Extension implements AutoCloseable {
     private final SafetyGate gate = new SafetyGate();
