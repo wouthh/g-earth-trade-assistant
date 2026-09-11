@@ -169,7 +169,7 @@ class BootstrapIT {
                             initializing ? "static { if (true) { " + fail + " } }" : "",
                             initializing ? "" : fail,
                             false),
-                    0,
+                    1,
                     "");
         }
     }
