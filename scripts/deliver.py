@@ -442,6 +442,10 @@ def verify_jar(data, version, revision=None):
         check('io/github/wouthh/tradeassistant/protocol/TradeAssistantExtension.class' in jar.namelist(), 'JAR entrypoint class missing')
         if snapshot:
             check('io/github/wouthh/tradeassistant/runtime/SnapshotClassLoader.class' in jar.namelist(), 'JAR bootstrap class missing')
+            if tuple(map(int, version.split('.'))) >= (0, 1, 4):
+                for helper in ('ResourceHandler', 'ResourceConnection'):
+                    check('io/github/wouthh/tradeassistant/runtime/SnapshotClassLoader$' + helper + '.class' in jar.namelist(),
+                          'JAR bootstrap resource helper missing')
             names = jar.namelist()
             check(len(names) == len(set(names)), 'duplicate snapshot JAR entry')
             check(all(not name.startswith('/') and '\\' not in name and '..' not in name.split('/')
