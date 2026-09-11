@@ -29,6 +29,9 @@ def synthetic_jar(version=VERSION, source=SOURCE):
         jar.writestr('META-INF/MANIFEST.MF', 'Main-Class: io.github.wouthh.tradeassistant.' + main + '\n')
         if modern:
             jar.writestr('io/github/wouthh/tradeassistant/runtime/SnapshotClassLoader.class', b'synthetic bootstrap')
+            if tuple(map(int, version.split('.'))) >= (0, 1, 4):
+                for helper in ('ResourceHandler', 'ResourceConnection'):
+                    jar.writestr('io/github/wouthh/tradeassistant/runtime/SnapshotClassLoader$' + helper + '.class', b'synthetic helper')
         jar.writestr('META-INF/maven/io.github.wouthh/g-earth-trade-assistant/pom.properties', 'version=' + version + '\n')
         if version != '0.1.0':
             jar.writestr('META-INF/tradeassistant-build.properties', 'source=' + source + '\nversion=' + version + '\n')
@@ -116,6 +119,17 @@ class PackageTests(unittest.TestCase):
                            'Multi-Release: true\n', 'Multi-Release: false\n', 'MULTI-RELEASE: \n'):
             with self.subTest(attributes=attributes), self.assertRaises(d.Refused):
                 d.verify_jar(self.snapshot_jar(attributes=attributes), '0.1.3', SOURCE)
+
+    def test_eager_resource_helper_classes_are_required_for_new_bootstrap(self):
+        d.verify_jar(synthetic_jar('0.1.4'), '0.1.4', SOURCE)
+        for helper in ('ResourceHandler', 'ResourceConnection'):
+            output = io.BytesIO()
+            with zipfile.ZipFile(io.BytesIO(synthetic_jar('0.1.4'))) as original, zipfile.ZipFile(output, 'w') as changed:
+                for entry in original.infolist():
+                    if not entry.filename.endswith('$' + helper + '.class'):
+                        changed.writestr(entry, original.read(entry))
+            with self.assertRaisesRegex(d.Refused, 'bootstrap resource helper missing'):
+                d.verify_jar(output.getvalue(), '0.1.4', SOURCE)
 
     def test_provenance_rejects_properties_aliases_duplicates_and_unknown_fields(self):
         canonical = 'source=' + SOURCE + '\nversion=0.1.1\n'
