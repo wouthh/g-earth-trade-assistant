@@ -173,19 +173,30 @@ public final class SnapshotClassLoader extends SecureClassLoader {
                             true,
                             snapshot);
             runtimeMain = runtime.getMethod("main", String[].class);
-        } catch (Exception | LinkageError invalidArchive) {
+        } catch (Throwable invalidArchive) {
             Thread.currentThread().setContextClassLoader(originalContext);
-            System.err.println("Extension archive could not be loaded safely.");
-            System.exit(2);
+            reportFailure(invalidArchive, false);
             return;
         }
         try {
             runtimeMain.invoke(null, (Object) arguments);
-        } catch (Exception | LinkageError runtimeFailure) {
-            System.err.println("Extension runtime stopped unexpectedly.");
-            System.exit(3);
+        } catch (java.lang.reflect.InvocationTargetException runtimeFailure) {
+            reportFailure(runtimeFailure.getCause(), true);
+        } catch (Throwable invocationFailure) {
+            reportFailure(invocationFailure, false);
         } finally {
             Thread.currentThread().setContextClassLoader(originalContext);
         }
+    }
+
+    private static void reportFailure(Throwable failure, boolean invokedRuntime) {
+        if (failure instanceof VirtualMachineError fatal) throw fatal;
+        if (failure instanceof ThreadDeath terminated) throw terminated;
+        boolean runtimeFailure = invokedRuntime && !(failure instanceof LinkageError);
+        System.err.println(
+                runtimeFailure
+                        ? "Extension runtime stopped unexpectedly."
+                        : "Extension archive could not be loaded safely.");
+        System.exit(runtimeFailure ? 3 : 2);
     }
 }

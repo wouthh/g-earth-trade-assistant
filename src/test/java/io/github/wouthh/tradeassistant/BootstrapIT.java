@@ -26,7 +26,7 @@ class BootstrapIT {
                         + initializer
                         + " public static void main(String[] args) {"
                         + body
-                        + "} }");
+                        + "} } class OmittedDependency { static void touch() {} }");
         assertEquals(
                 0,
                 ToolProvider.getSystemJavaCompiler()
@@ -107,5 +107,59 @@ class BootstrapIT {
                 fixture("", "throw new RuntimeException(\"synthetic hidden detail\");", false),
                 3,
                 "Extension runtime stopped unexpectedly.");
+    }
+
+    @Test
+    void sanitizesNonfatalInitializerErrors() throws Exception {
+        for (String error : new String[] {"AssertionError", "java.awt.AWTError"}) {
+            launch(
+                    fixture(
+                            "static { if (true) throw new "
+                                    + error
+                                    + "(\"synthetic hidden detail\"); }",
+                            "",
+                            false),
+                    2,
+                    "Extension archive could not be loaded safely.");
+        }
+    }
+
+    @Test
+    void classifiesMissingLazyDependencyAsArchiveFailure() throws Exception {
+        launch(
+                fixture("", "OmittedDependency.touch();", false),
+                2,
+                "Extension archive could not be loaded safely.");
+    }
+
+    @Test
+    void preservesFatalVmFailurePropagationInBothPhases() throws Exception {
+        for (boolean initializing : new boolean[] {true, false}) {
+            String fail = "throw new OutOfMemoryError(\"synthetic fatal VM failure\");";
+            Path jar =
+                    fixture(
+                            initializing ? "static { if (true) { " + fail + " } }" : "",
+                            initializing ? "" : fail,
+                            false);
+            Process child =
+                    new ProcessBuilder(
+                                    ProcessHandle.current().info().command().orElseThrow(),
+                                    "-jar",
+                                    jar.toString())
+                            .redirectErrorStream(true)
+                            .start();
+            try {
+                assertTrue(child.waitFor(10, TimeUnit.SECONDS));
+                assertEquals(1, child.exitValue());
+                String output =
+                        new String(child.getInputStream().readNBytes(4097), StandardCharsets.UTF_8);
+                assertTrue(
+                        output.contains("java.lang.OutOfMemoryError: synthetic fatal VM failure"));
+                assertFalse(output.contains("Extension archive could not be loaded safely."));
+                assertFalse(output.contains("Extension runtime stopped unexpectedly."));
+            } finally {
+                if (child.isAlive()) child.destroyForcibly();
+            }
+        }
     }
 }
