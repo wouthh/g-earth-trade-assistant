@@ -1,5 +1,6 @@
 """Offline release and atomic update fixtures; no installed host or account input."""
 import io
+from contextlib import nullcontext
 import json
 import os
 import struct
@@ -45,6 +46,34 @@ class PackageTests(unittest.TestCase):
                     changed.writestr(name, original.read(name))
         with self.assertRaisesRegex(d.Refused, 'JAR bootstrap class missing'):
             d.verify_jar(output.getvalue(), '0.1.2', SOURCE)
+
+    def snapshot_jar(self, entries=(), attributes=""):
+        output = io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(synthetic_jar('0.1.3'))) as original, zipfile.ZipFile(output, 'w') as changed:
+            for entry in original.infolist():
+                data = original.read(entry)
+                if entry.filename == 'META-INF/MANIFEST.MF':
+                    data += attributes.encode()
+                changed.writestr(entry, data)
+            for name, data in entries:
+                changed.writestr(name, data)
+        return output.getvalue()
+
+    def test_snapshot_package_rejects_loader_invalid_entries(self):
+        d.verify_jar(self.snapshot_jar([('assets/', b''), ('assets/value', b'ok')]), '0.1.3', SOURCE)
+        cases = [[('dup', b'one'), ('dup', b'two')], [('/absolute', b'x')],
+                 [('a/../value', b'x')], [('a\\value', b'x')], [('assets/', b'payload')]]
+        for entries in cases:
+            with self.subTest(entries=entries), self.assertWarns(UserWarning) if len(entries) == 2 else nullcontext():
+                data = self.snapshot_jar(entries)
+                with self.assertRaises(d.Refused):
+                    d.verify_jar(data, '0.1.3', SOURCE)
+
+    def test_snapshot_package_rejects_loader_unsupported_manifest_attributes(self):
+        for attributes in ('Class-Path: external.jar\n', 'cLaSs-PaTh: \n',
+                           'Multi-Release: true\n', 'Multi-Release: false\n', 'MULTI-RELEASE: \n'):
+            with self.subTest(attributes=attributes), self.assertRaises(d.Refused):
+                d.verify_jar(self.snapshot_jar(attributes=attributes), '0.1.3', SOURCE)
 
     def test_provenance_rejects_properties_aliases_duplicates_and_unknown_fields(self):
         canonical = 'source=' + SOURCE + '\nversion=0.1.1\n'

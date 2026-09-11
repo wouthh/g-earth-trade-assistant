@@ -225,3 +225,9 @@ thread termination stays silent.
 Package verification, immutable archive loading and passive identity reads use
 the same 64 MiB (67,108,864-byte) archive limit. Expanded archive entries share
 that total budget. Exact-limit inputs are accepted; one byte over is refused.
+
+For snapshot packages (0.1.2 and later), the package verifier also enforces
+the loader's archive structure: unique entry names, no absolute/backslash/parent
+paths, empty directory entries, and no `Class-Path` or `Multi-Release` manifest
+attribute. These checks apply before installation; legacy package verification
+continues to use its original entrypoint contract.

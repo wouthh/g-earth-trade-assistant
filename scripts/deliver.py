@@ -364,6 +364,14 @@ def verify_jar(data, version, revision=None):
         check('io/github/wouthh/tradeassistant/protocol/TradeAssistantExtension.class' in jar.namelist(), 'JAR entrypoint class missing')
         if snapshot:
             check('io/github/wouthh/tradeassistant/runtime/SnapshotClassLoader.class' in jar.namelist(), 'JAR bootstrap class missing')
+            names = jar.namelist()
+            check(len(names) == len(set(names)), 'duplicate snapshot JAR entry')
+            check(all(not name.startswith('/') and '\\' not in name and '..' not in name.split('/')
+                      for name in names), 'invalid snapshot JAR entry name')
+            check(all(not entry.is_dir() or entry.file_size == 0 for entry in jar.infolist()),
+                  'snapshot JAR directory has payload')
+            check('class-path' not in fields and 'multi-release' not in fields,
+                  'unsupported snapshot JAR manifest attribute')
         if tuple(map(int, version.split('.'))) >= (0, 1, 1):
             name = 'META-INF/tradeassistant-build.properties'
             check(jar.namelist().count(name) == 1, 'JAR build provenance missing or ambiguous')
