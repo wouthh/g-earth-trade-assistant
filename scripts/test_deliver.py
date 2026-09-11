@@ -237,9 +237,11 @@ class ExchangeTests(PackageTests):
         self.desc['expected_files'] = d.inventory(self.target); self.write_descriptor()
         self.assertEqual(self.run_delivery()['state'], 'unchanged')
         self.assertEqual(len(list(self.state.glob('[0-9a-f]*.json'))), 8)
+        retained_package = self.package.read_bytes(); retained_digest = self.digest
         self.files['README.md'] = b'synthetic ninth generation'; self.make_package()
         with self.assertRaisesRegex(d.Refused, 'eight retained generations'): self.run_delivery()
-        self.files['README.md'] = b'synthetic generation 7'; self.make_package()
+        # Retry the exact retained artifact; rebuilding ZIP metadata changes its identity.
+        self.package.write_bytes(retained_package); self.digest = retained_digest
         self.desc = descriptors[-1]; self.write_descriptor()
         self.run_delivery(); self.run_delivery(undo=True)
         self.desc['locks'] = [str(self.root / 'different.lock')]
