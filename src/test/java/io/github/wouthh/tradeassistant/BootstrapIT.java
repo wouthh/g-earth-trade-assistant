@@ -153,13 +153,24 @@ class BootstrapIT {
                 assertEquals(1, child.exitValue());
                 String output =
                         new String(child.getInputStream().readNBytes(4097), StandardCharsets.UTF_8);
-                assertTrue(
-                        output.contains("java.lang.OutOfMemoryError: synthetic fatal VM failure"));
-                assertFalse(output.contains("Extension archive could not be loaded safely."));
-                assertFalse(output.contains("Extension runtime stopped unexpectedly."));
+                assertEquals("Extension stopped after a fatal runtime error.", output.trim());
             } finally {
                 if (child.isAlive()) child.destroyForcibly();
             }
+        }
+    }
+
+    @Test
+    void preservesSilentThreadTerminationInBothPhases() throws Exception {
+        for (boolean initializing : new boolean[] {true, false}) {
+            String fail = "throw new ThreadDeath();";
+            launch(
+                    fixture(
+                            initializing ? "static { if (true) { " + fail + " } }" : "",
+                            initializing ? "" : fail,
+                            false),
+                    0,
+                    "");
         }
     }
 }

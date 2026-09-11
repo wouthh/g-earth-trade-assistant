@@ -25,6 +25,11 @@ import java.util.zip.ZipInputStream;
 /** Owns the exact bounded bytes used to load extension code and resources. */
 public final class SnapshotClassLoader extends SecureClassLoader {
     private static final int LIMIT = 64_000_000;
+    private static final Thread.UncaughtExceptionHandler FATAL_HANDLER =
+            (thread, failure) -> {
+                if (!(failure instanceof ThreadDeath))
+                    System.err.println("Extension stopped after a fatal runtime error.");
+            };
     private static final String BUILD = "META-INF/tradeassistant-build.properties";
     private static final Pattern PROVENANCE =
             Pattern.compile(
@@ -190,8 +195,14 @@ public final class SnapshotClassLoader extends SecureClassLoader {
     }
 
     private static void reportFailure(Throwable failure, boolean invokedRuntime) {
-        if (failure instanceof VirtualMachineError fatal) throw fatal;
-        if (failure instanceof ThreadDeath terminated) throw terminated;
+        if (failure instanceof VirtualMachineError fatal) {
+            Thread.currentThread().setUncaughtExceptionHandler(FATAL_HANDLER);
+            throw fatal;
+        }
+        if (failure instanceof ThreadDeath terminated) {
+            Thread.currentThread().setUncaughtExceptionHandler(FATAL_HANDLER);
+            throw terminated;
+        }
         boolean runtimeFailure = invokedRuntime && !(failure instanceof LinkageError);
         System.err.println(
                 runtimeFailure
