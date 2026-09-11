@@ -79,7 +79,8 @@ public final class LoadedIdentity implements AutoCloseable {
     }
 
     static String digest(Path path) throws Exception {
-        if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) || Files.size(path) > 64_000_000)
+        if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
+                || Files.size(path) > 64 * 1024 * 1024)
             throw new IOException("Identity input must be a bounded regular file");
         MessageDigest hash = MessageDigest.getInstance("SHA-256");
         try (InputStream input = Files.newInputStream(path, LinkOption.NOFOLLOW_LINKS)) {
@@ -88,7 +89,7 @@ public final class LoadedIdentity implements AutoCloseable {
             long total = 0;
             while ((read = input.read(buffer)) != -1) {
                 total += read;
-                if (total > 64_000_000)
+                if (total > 64 * 1024 * 1024)
                     throw new IOException("Identity input grew beyond its bound");
                 hash.update(buffer, 0, read);
             }
@@ -98,7 +99,7 @@ public final class LoadedIdentity implements AutoCloseable {
 
     private static Properties metadata(Path artifact) throws IOException {
         if (!Files.isRegularFile(artifact, LinkOption.NOFOLLOW_LINKS)
-                || Files.size(artifact) > 64_000_000)
+                || Files.size(artifact) > 64 * 1024 * 1024)
             throw new IOException("Build artifact must be a bounded regular file");
         Properties properties = new Properties();
         try (JarFile jar = new JarFile(artifact.toFile())) {

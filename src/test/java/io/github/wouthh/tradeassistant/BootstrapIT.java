@@ -32,7 +32,7 @@ class BootstrapIT {
                 ToolProvider.getSystemJavaCompiler()
                         .run(null, null, null, "-d", root.toString(), source.toString()));
         Path jar = root.resolve("bootstrap-fixture.jar");
-        try (JarFile built = new JarFile("target/g-earth-trade-assistant-0.1.2.jar");
+        try (JarFile built = new JarFile("target/g-earth-trade-assistant-0.1.3.jar");
                 JarOutputStream out =
                         new JarOutputStream(Files.newOutputStream(jar), built.getManifest())) {
             for (var entry : java.util.Collections.list(built.entries())) {

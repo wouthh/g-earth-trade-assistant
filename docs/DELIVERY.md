@@ -219,3 +219,22 @@ remain archive failures even when first triggered lazily by runtime code. Fatal
 VM errors and thread termination propagate in either phase. A bootstrap-thread
 uncaught handler prints one fixed fatal diagnostic without exception details;
 thread termination stays silent.
+
+## Archive byte budget in 0.1.3
+
+Package verification, immutable archive loading and passive identity reads use
+the same 64 MiB (67,108,864-byte) archive limit. Expanded archive entries share
+that total budget. Exact-limit inputs are accepted; one byte over is refused.
+
+For snapshot packages (0.1.2 and later), the package verifier also enforces
+the loader's archive structure: unique entry names, no absolute/backslash/parent
+paths, empty directory entries, and no `Class-Path` or `Multi-Release` manifest
+attribute. These checks apply before installation; legacy package verification
+continues to use its original entrypoint contract.
+
+Snapshot package verification reads every complete compressed stream and checks
+local-header/data-descriptor CRCs and sizes against the central directory. The
+canonical ZIP subset uses contiguous UTF-8 local entries, stored or deflated
+compression, and no ZIP64 or unsupported flags. Snapshot manifests use bounded
+Java-compatible header names (at most 70 ASCII bytes), physical lines of at most
+510 bytes, valid continuations and `Name`-led sections.

@@ -1,5 +1,6 @@
 """Offline release and atomic update fixtures; no installed host or account input."""
 import io
+from contextlib import nullcontext
 import json
 import os
 import struct
@@ -45,6 +46,76 @@ class PackageTests(unittest.TestCase):
                     changed.writestr(name, original.read(name))
         with self.assertRaisesRegex(d.Refused, 'JAR bootstrap class missing'):
             d.verify_jar(output.getvalue(), '0.1.2', SOURCE)
+
+    def snapshot_jar(self, entries=(), attributes=""):
+        output = io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(synthetic_jar('0.1.3'))) as original, zipfile.ZipFile(output, 'w') as changed:
+            for entry in original.infolist():
+                data = original.read(entry)
+                if entry.filename == 'META-INF/MANIFEST.MF':
+                    data += attributes.encode()
+                changed.writestr(entry, data)
+            for name, data in entries:
+                changed.writestr(name, data)
+        return output.getvalue()
+
+    def test_snapshot_local_crc_and_sizes_cannot_hide_directory_payload(self):
+        valid = self.snapshot_jar([('directory/', b'')])
+        d.verify_jar(valid, '0.1.3', SOURCE)
+        with zipfile.ZipFile(io.BytesIO(valid)) as archive:
+            offset = archive.getinfo('directory/').header_offset
+        for field in (14, 18, 22):
+            with self.subTest(field=field):
+                changed = bytearray(valid)
+                struct.pack_into('<I', changed, offset + field, 1)
+                with self.assertRaises(d.Refused):
+                    d.verify_jar(changed, '0.1.3', SOURCE)
+
+    def test_snapshot_data_descriptors_match_streamed_entries(self):
+        class StreamingBuffer(io.BytesIO):
+            def seek(self, *args):
+                raise io.UnsupportedOperation("stream")
+        output = StreamingBuffer()
+        with zipfile.ZipFile(io.BytesIO(self.snapshot_jar())) as original, zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED) as changed:
+            for entry in original.infolist():
+                changed.writestr(entry.filename, original.read(entry))
+        valid = output.getvalue()
+        d.verify_jar(valid, '0.1.3', SOURCE)
+        with zipfile.ZipFile(io.BytesIO(valid)) as archive:
+            entry = archive.infolist()[0]
+        name_size, extra_size = struct.unpack_from('<HH', valid, entry.header_offset + 26)
+        descriptor = entry.header_offset + 30 + name_size + extra_size + entry.compress_size
+        self.assertEqual(b'PK\x07\x08', valid[descriptor:descriptor + 4])
+        for field in (4, 8, 12):
+            with self.subTest(field=field):
+                corrupted = bytearray(valid)
+                value = struct.unpack_from('<I', corrupted, descriptor + field)[0]
+                struct.pack_into('<I', corrupted, descriptor + field, value ^ 1)
+                with self.assertRaises(d.Refused):
+                    d.verify_jar(corrupted, '0.1.3', SOURCE)
+
+    def test_snapshot_manifest_uses_java_header_and_section_grammar(self):
+        d.verify_jar(self.snapshot_jar(attributes='Extra: first\n continuation\n\nName: resource\nDigest: value\n'), '0.1.3', SOURCE)
+        for attributes in ('Bad@Name: x\n', 'X' * 71 + ': x\n', 'Long: ' + 'x' * 512 + '\n',
+                           '\nBad: section-without-name\n', '\nName: resource\nBad@Name: x\n'):
+            with self.subTest(attributes=attributes), self.assertRaises(d.Refused):
+                d.verify_jar(self.snapshot_jar(attributes=attributes), '0.1.3', SOURCE)
+
+    def test_snapshot_package_rejects_loader_invalid_entries(self):
+        d.verify_jar(self.snapshot_jar([('assets/', b''), ('assets/value', b'ok')]), '0.1.3', SOURCE)
+        cases = [[('dup', b'one'), ('dup', b'two')], [('/absolute', b'x')],
+                 [('a/../value', b'x')], [('a\\value', b'x')], [('assets/', b'payload')]]
+        for entries in cases:
+            with self.subTest(entries=entries), self.assertWarns(UserWarning) if len(entries) == 2 else nullcontext():
+                data = self.snapshot_jar(entries)
+                with self.assertRaises(d.Refused):
+                    d.verify_jar(data, '0.1.3', SOURCE)
+
+    def test_snapshot_package_rejects_loader_unsupported_manifest_attributes(self):
+        for attributes in ('Class-Path: external.jar\n', 'cLaSs-PaTh: \n',
+                           'Multi-Release: true\n', 'Multi-Release: false\n', 'MULTI-RELEASE: \n'):
+            with self.subTest(attributes=attributes), self.assertRaises(d.Refused):
+                d.verify_jar(self.snapshot_jar(attributes=attributes), '0.1.3', SOURCE)
 
     def test_provenance_rejects_properties_aliases_duplicates_and_unknown_fields(self):
         canonical = 'source=' + SOURCE + '\nversion=0.1.1\n'
