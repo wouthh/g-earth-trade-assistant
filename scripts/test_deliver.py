@@ -59,6 +59,18 @@ class PackageTests(unittest.TestCase):
                 changed.writestr(name, data)
         return output.getvalue()
 
+    def test_snapshot_local_crc_and_sizes_cannot_hide_directory_payload(self):
+        valid = self.snapshot_jar([('directory/', b'')])
+        d.verify_jar(valid, '0.1.3', SOURCE)
+        with zipfile.ZipFile(io.BytesIO(valid)) as archive:
+            offset = archive.getinfo('directory/').header_offset
+        for field in (14, 18, 22):
+            with self.subTest(field=field):
+                changed = bytearray(valid)
+                struct.pack_into('<I', changed, offset + field, 1)
+                with self.assertRaises(d.Refused):
+                    d.verify_jar(changed, '0.1.3', SOURCE)
+
     def test_snapshot_data_descriptors_match_streamed_entries(self):
         class StreamingBuffer(io.BytesIO):
             def seek(self, *args):
