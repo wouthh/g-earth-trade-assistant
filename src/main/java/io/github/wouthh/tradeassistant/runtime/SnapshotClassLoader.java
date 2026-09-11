@@ -3,7 +3,6 @@ package io.github.wouthh.tradeassistant.runtime;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.lang.reflect.InvocationTargetException;
 import java.net.URL;
 import java.net.URLConnection;
 import java.net.URLStreamHandler;
@@ -26,6 +25,11 @@ import java.util.zip.ZipInputStream;
 /** Owns the exact bounded bytes used to load extension code and resources. */
 public final class SnapshotClassLoader extends SecureClassLoader {
     private static final int LIMIT = 64_000_000;
+    private static final Thread.UncaughtExceptionHandler FATAL_HANDLER =
+            (thread, failure) -> {
+                if (!(failure instanceof ThreadDeath))
+                    System.err.println("Extension stopped after a fatal runtime error.");
+            };
     private static final String BUILD = "META-INF/tradeassistant-build.properties";
     private static final Pattern PROVENANCE =
             Pattern.compile(
@@ -159,23 +163,51 @@ public final class SnapshotClassLoader extends SecureClassLoader {
                 resource == null ? java.util.List.of() : java.util.List.of(resource));
     }
 
-    public static boolean launchIfNeeded(Class<?> anchor, String[] args) throws Exception {
-        if (anchor.getClassLoader() instanceof SnapshotClassLoader) return false;
-        Path path = Path.of(anchor.getProtectionDomain().getCodeSource().getLocation().toURI());
-        SnapshotClassLoader loader = new SnapshotClassLoader(path);
-        ClassLoader previous = Thread.currentThread().getContextClassLoader();
+    /** JDK-only manifest entrypoint; product code cannot initialize before the snapshot. */
+    public static void main(String[] arguments) {
+        ClassLoader originalContext = Thread.currentThread().getContextClassLoader();
+        java.lang.reflect.Method runtimeMain;
         try {
-            Thread.currentThread().setContextClassLoader(loader);
-            loader.loadClass(anchor.getName())
-                    .getMethod("main", String[].class)
-                    .invoke(null, (Object) args);
-        } catch (InvocationTargetException failure) {
-            if (failure.getCause() instanceof Exception exception) throw exception;
-            if (failure.getCause() instanceof Error error) throw error;
-            throw failure;
-        } finally {
-            Thread.currentThread().setContextClassLoader(previous);
+            var location =
+                    SnapshotClassLoader.class.getProtectionDomain().getCodeSource().getLocation();
+            var snapshot = new SnapshotClassLoader(Path.of(location.toURI()));
+            Thread.currentThread().setContextClassLoader(snapshot);
+            var runtime =
+                    Class.forName(
+                            "io.github.wouthh.tradeassistant.protocol.TradeAssistantExtension",
+                            true,
+                            snapshot);
+            runtimeMain = runtime.getMethod("main", String[].class);
+        } catch (Throwable invalidArchive) {
+            Thread.currentThread().setContextClassLoader(originalContext);
+            reportFailure(invalidArchive, false);
+            return;
         }
-        return true;
+        try {
+            runtimeMain.invoke(null, (Object) arguments);
+        } catch (java.lang.reflect.InvocationTargetException runtimeFailure) {
+            reportFailure(runtimeFailure.getCause(), true);
+        } catch (Throwable invocationFailure) {
+            reportFailure(invocationFailure, false);
+        } finally {
+            Thread.currentThread().setContextClassLoader(originalContext);
+        }
+    }
+
+    private static void reportFailure(Throwable failure, boolean invokedRuntime) {
+        if (failure instanceof VirtualMachineError fatal) {
+            Thread.currentThread().setUncaughtExceptionHandler(FATAL_HANDLER);
+            throw fatal;
+        }
+        if (failure instanceof ThreadDeath terminated) {
+            Thread.currentThread().setUncaughtExceptionHandler(FATAL_HANDLER);
+            throw terminated;
+        }
+        boolean runtimeFailure = invokedRuntime && !(failure instanceof LinkageError);
+        System.err.println(
+                runtimeFailure
+                        ? "Extension runtime stopped unexpectedly."
+                        : "Extension archive could not be loaded safely.");
+        System.exit(runtimeFailure ? 3 : 2);
     }
 }

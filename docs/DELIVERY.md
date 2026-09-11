@@ -198,3 +198,24 @@ It does not edit tracked source or create a self-referential commit field. Plain
 provenance deliberately cannot emit a verified runtime receipt. Retain source,
 recipe, toolchain and artifact fingerprints with delivery builds. Stop other
 writers before packaging; observed clean-tree checks are not atomic isolation.
+
+## JDK-only startup in 0.1.2
+
+The manifest starts `runtime.SnapshotClassLoader`, which depends only on the JDK.
+It captures the archive before loading or initializing the extension or G-Earth
+API. Every product class and resource is then defined by that snapshot. The JDK
+and small bootstrap remain trusted prerequisites outside the product identity.
+Archive setup and linkage/initialization failures return status 2 with a fixed
+message. Failures after invoking the initialized runtime entrypoint return
+status 3 with a distinct fixed message; exception details are never printed.
+The normal host launch, disconnected demo and read-only verifier use this route.
+
+Installer verification keeps the original entrypoint contract for retained 0.1.0
+and 0.1.1 packages so existing-installation checks and rollback remain usable.
+Version 0.1.2 and later require the JDK-only bootstrap and its class entry.
+
+Nonfatal initializer errors use the fixed archive diagnostic. Linkage failures
+remain archive failures even when first triggered lazily by runtime code. Fatal
+VM errors and thread termination propagate in either phase. A bootstrap-thread
+uncaught handler prints one fixed fatal diagnostic without exception details;
+thread termination stays silent.

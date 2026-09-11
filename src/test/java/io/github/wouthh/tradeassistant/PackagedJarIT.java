@@ -15,7 +15,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 class PackagedJarIT {
     @TempDir Path temp;
-    final Path jar = Path.of("target/g-earth-trade-assistant-0.1.1.jar").toAbsolutePath();
+    final Path jar = Path.of("target/g-earth-trade-assistant-0.1.2.jar").toAbsolutePath();
 
     @Test
     void replacedPathCannotBeAttestedAsTheExecutingSnapshot() throws Exception {
@@ -31,7 +31,7 @@ class PackagedJarIT {
                     output.putNextEntry(new java.util.jar.JarEntry(entry.getName()));
                     if (entry.getName().equals("META-INF/tradeassistant-build.properties"))
                         output.write(
-                                ("source=" + source + "\nversion=0.1.1\n")
+                                ("source=" + source + "\nversion=0.1.2\n")
                                         .getBytes(java.nio.charset.StandardCharsets.UTF_8));
                     else
                         try (var input = original.getInputStream(entry)) {
@@ -103,7 +103,7 @@ class PackagedJarIT {
     void metadataAndNetworkFreeDemo() throws Exception {
         try (JarFile archive = new JarFile(jar.toFile())) {
             assertEquals(
-                    "io.github.wouthh.tradeassistant.protocol.TradeAssistantExtension",
+                    "io.github.wouthh.tradeassistant.runtime.SnapshotClassLoader",
                     archive.getManifest().getMainAttributes().getValue("Main-Class"));
             assertNotNull(archive.getEntry("META-INF/LICENSE"));
             assertNotNull(archive.getEntry("META-INF/THIRD-PARTY-NOTICES.md"));
@@ -121,8 +121,8 @@ class PackagedJarIT {
         } finally {
             process.destroyForcibly();
         }
-        try (ZipFile zip = new ZipFile("target/G-Earth-Trade-Assistant-0.1.1-extension.zip")) {
-            var command = zip.getEntry("G-Earth-Trade-Assistant-0.1.1/command.txt");
+        try (ZipFile zip = new ZipFile("target/G-Earth-Trade-Assistant-0.1.2-extension.zip")) {
+            var command = zip.getEntry("G-Earth-Trade-Assistant-0.1.2/command.txt");
             assertNotNull(command);
             String text =
                     new String(
@@ -132,14 +132,14 @@ class PackagedJarIT {
             assertTrue(text.contains("jre"));
             assertNotNull(
                     zip.getEntry(
-                            "G-Earth-Trade-Assistant-0.1.1/extension/G-Earth-Trade-Assistant.jar"));
+                            "G-Earth-Trade-Assistant-0.1.2/extension/G-Earth-Trade-Assistant.jar"));
         }
     }
 
     @Test
     void extractedFolderLaunchesFromTheHostsExtensionWorkingDirectory() throws Exception {
         Path extracted = temp.resolve("extracted");
-        try (ZipFile zip = new ZipFile("target/G-Earth-Trade-Assistant-0.1.1-extension.zip")) {
+        try (ZipFile zip = new ZipFile("target/G-Earth-Trade-Assistant-0.1.2-extension.zip")) {
             for (var entry : java.util.Collections.list(zip.entries())) {
                 Path destination = extracted.resolve(entry.getName()).normalize();
                 assertTrue(destination.startsWith(extracted));
@@ -153,7 +153,7 @@ class PackagedJarIT {
                 }
             }
         }
-        Path folder = extracted.resolve("G-Earth-Trade-Assistant-0.1.1");
+        Path folder = extracted.resolve("G-Earth-Trade-Assistant-0.1.2");
         var command = new org.json.JSONArray(Files.readString(folder.resolve("command.txt")));
         assertEquals("C:\\G-Earth\\jre\\bin\\java.exe", command.getString(0));
         var args = new java.util.ArrayList<String>();
@@ -208,7 +208,7 @@ class PackagedJarIT {
                     assertEquals(1, info.headerId());
                     assertEquals("G-Earth Trade Assistant", info.readString());
                     assertEquals("Wout H.", info.readString());
-                    assertEquals("0.1.1", info.readString());
+                    assertEquals("0.1.2", info.readString());
                     info.readString();
                     assertTrue(info.readBoolean());
                     assertTrue(info.readBoolean());

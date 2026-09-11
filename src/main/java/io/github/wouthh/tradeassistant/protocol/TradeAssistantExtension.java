@@ -19,7 +19,7 @@ import javax.swing.*;
 @ExtensionInfo(
         Title = "G-Earth Trade Assistant",
         Author = "Wout H.",
-        Version = "0.1.1",
+        Version = "0.1.2",
         Description = "Explicitly armed Origins bronze conversion; purchasing unavailable.")
 public final class TradeAssistantExtension extends Extension implements AutoCloseable {
     private final SafetyGate gate = new SafetyGate();
@@ -308,7 +308,6 @@ public final class TradeAssistantExtension extends Extension implements AutoClos
             OfflineDemo.main(args);
             return;
         }
-        if (SnapshotClassLoader.launchIfNeeded(TradeAssistantExtension.class, args)) return;
         try (TradeAssistantExtension extension = new TradeAssistantExtension(args)) {
             extension.run();
         }

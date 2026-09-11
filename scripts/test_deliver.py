@@ -23,7 +23,11 @@ def synthetic_jar(version=VERSION, source=SOURCE):
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w') as jar:
         jar.writestr('io/github/wouthh/tradeassistant/protocol/TradeAssistantExtension.class', b'synthetic class')
-        jar.writestr('META-INF/MANIFEST.MF', 'Main-Class: io.github.wouthh.tradeassistant.protocol.TradeAssistantExtension\n')
+        modern = tuple(map(int, version.split('.'))) >= (0, 1, 2)
+        main = 'runtime.SnapshotClassLoader' if modern else 'protocol.TradeAssistantExtension'
+        jar.writestr('META-INF/MANIFEST.MF', 'Main-Class: io.github.wouthh.tradeassistant.' + main + '\n')
+        if modern:
+            jar.writestr('io/github/wouthh/tradeassistant/runtime/SnapshotClassLoader.class', b'synthetic bootstrap')
         jar.writestr('META-INF/maven/io.github.wouthh/g-earth-trade-assistant/pom.properties', 'version=' + version + '\n')
         if version != '0.1.0':
             jar.writestr('META-INF/tradeassistant-build.properties', 'source=' + source + '\nversion=' + version + '\n')
@@ -31,6 +35,17 @@ def synthetic_jar(version=VERSION, source=SOURCE):
 
 
 class PackageTests(unittest.TestCase):
+    def test_modern_bootstrap_and_legacy_identity_are_both_verified(self):
+        for version in ('0.1.0', '0.1.1', '0.1.2'):
+            d.verify_jar(synthetic_jar(version), version, SOURCE if version != '0.1.0' else None)
+        output = io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(synthetic_jar('0.1.2'))) as original, zipfile.ZipFile(output, 'w') as changed:
+            for name in original.namelist():
+                if not name.endswith('/SnapshotClassLoader.class'):
+                    changed.writestr(name, original.read(name))
+        with self.assertRaisesRegex(d.Refused, 'JAR bootstrap class missing'):
+            d.verify_jar(output.getvalue(), '0.1.2', SOURCE)
+
     def test_provenance_rejects_properties_aliases_duplicates_and_unknown_fields(self):
         canonical = 'source=' + SOURCE + '\nversion=0.1.1\n'
         for extra in ('vers\\u0069on=9.9.9\n', 'source : ' + 'b' * 40 + '\n',
@@ -222,9 +237,11 @@ class ExchangeTests(PackageTests):
         self.desc['expected_files'] = d.inventory(self.target); self.write_descriptor()
         self.assertEqual(self.run_delivery()['state'], 'unchanged')
         self.assertEqual(len(list(self.state.glob('[0-9a-f]*.json'))), 8)
+        retained_package = self.package.read_bytes(); retained_digest = self.digest
         self.files['README.md'] = b'synthetic ninth generation'; self.make_package()
         with self.assertRaisesRegex(d.Refused, 'eight retained generations'): self.run_delivery()
-        self.files['README.md'] = b'synthetic generation 7'; self.make_package()
+        # Retry the exact retained artifact; rebuilding ZIP metadata changes its identity.
+        self.package.write_bytes(retained_package); self.digest = retained_digest
         self.desc = descriptors[-1]; self.write_descriptor()
         self.run_delivery(); self.run_delivery(undo=True)
         self.desc['locks'] = [str(self.root / 'different.lock')]
