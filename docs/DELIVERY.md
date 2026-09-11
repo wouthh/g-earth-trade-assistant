@@ -231,3 +231,10 @@ the loader's archive structure: unique entry names, no absolute/backslash/parent
 paths, empty directory entries, and no `Class-Path` or `Multi-Release` manifest
 attribute. These checks apply before installation; legacy package verification
 continues to use its original entrypoint contract.
+
+Snapshot package verification reads every complete compressed stream and checks
+local-header/data-descriptor CRCs and sizes against the central directory. The
+canonical ZIP subset uses contiguous UTF-8 local entries, stored or deflated
+compression, and no ZIP64 or unsupported flags. Snapshot manifests use bounded
+Java-compatible header names (at most 70 ASCII bytes), physical lines of at most
+510 bytes, valid continuations and `Name`-led sections.

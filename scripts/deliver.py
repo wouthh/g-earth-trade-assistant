@@ -24,6 +24,7 @@ import stat
 import struct
 import zipfile
 import zlib
+import zlib
 
 FILES = frozenset({'command.txt', 'README.md', 'LICENSE', 'THIRD-PARTY-NOTICES.md',
                    'extension/G-Earth-Trade-Assistant.jar'})
@@ -342,6 +343,80 @@ def read_package(path, checksum, revision):
             'files': {name: sha(data) for name, data in payload.items()}}, payload
 
 
+def snapshot_manifest(data):
+    # A bounded canonical subset of java.util.jar.Manifest, including sections.
+    check(data.endswith((b'\n', b'\r')), 'unterminated snapshot manifest')
+    lines = data.replace(b'\r\n', b'\n').replace(b'\r', b'\n').split(b'\n')[:-1]
+    main = {}; current = main; previous = None
+    for line in lines:
+        check(len(line) <= 510, 'snapshot manifest line too long')
+        if not line:
+            current = None; previous = None
+        elif line.startswith(b' '):
+            check(current is not None and previous is not None, 'invalid snapshot manifest continuation')
+            current[previous] += line[1:]
+        else:
+            name, separator, value = line.partition(b': ')
+            check(separator and re.fullmatch(rb'[A-Za-z0-9_-]{1,70}', name) is not None,
+                  'invalid snapshot manifest header')
+            name = name.decode('ascii').lower()
+            if current is None:
+                check(name == 'name', 'invalid snapshot manifest section')
+                current = {}
+            check(name not in current, 'duplicate snapshot manifest header')
+            current[name] = value; previous = name
+    return {name: value.decode('utf-8') for name, value in main.items()}
+
+
+def verify_snapshot_stream(archive, data):
+    # ZipFile checks central records. ZipInputStream consumes local headers,
+    # complete compressed streams and data descriptors; approve only agreement.
+    offset = 0; expanded = 0
+    for entry in sorted(archive.infolist(), key=lambda item: item.header_offset):
+        check(entry.header_offset == offset and offset + 30 <= len(data), 'noncontiguous snapshot ZIP entries')
+        signature, version, flags, method, _, _, crc, compressed, size, name_size, extra_size = struct.unpack_from('<4s5H3I2H', data, offset)
+        check(signature == b'PK\x03\x04' and version <= 20 and flags & ~0x0808 == 0,
+              'unsupported snapshot ZIP header')
+        check(flags == entry.flag_bits and method == entry.compress_type and method in (0, 8),
+              'snapshot ZIP metadata differs')
+        check(not flags & 8 or method == 8, 'stored snapshot entry has data descriptor')
+        start = offset + 30 + name_size + extra_size; end = start + entry.compress_size
+        check(end <= archive.start_dir, 'snapshot ZIP payload exceeds local records')
+        name = bytes(data[offset + 30:offset + 30 + name_size]).decode('utf-8')
+        check(name == entry.orig_filename == entry.filename, 'snapshot ZIP name differs')
+        extra = data[offset + 30 + name_size:start]; cursor = 0
+        while cursor < len(extra):
+            check(cursor + 4 <= len(extra), 'truncated snapshot ZIP extra')
+            kind, length = struct.unpack_from('<HH', extra, cursor); cursor += 4
+            check(kind != 1 and cursor + length <= len(extra), 'unsupported snapshot ZIP64 or extra field')
+            cursor += length
+        payload = data[start:end]
+        if method == 8:
+            decoder = zlib.decompressobj(-15)
+            try:
+                value = decoder.decompress(payload, LIMIT - expanded + 1)
+            except zlib.error:
+                check(False, 'invalid snapshot compressed stream')
+            check(decoder.eof and not decoder.unused_data and not decoder.unconsumed_tail,
+                  'incomplete or oversized snapshot compressed stream')
+        else:
+            value = payload
+        expanded += len(value)
+        check(expanded <= LIMIT and len(value) == entry.file_size and zlib.crc32(value) == entry.CRC,
+              'snapshot ZIP expanded size or CRC differs')
+        if flags & 8:
+            descriptor = end + (4 if data[end:end + 4] == b'PK\x07\x08' else 0)
+            check(descriptor + 12 <= archive.start_dir, 'missing snapshot ZIP data descriptor')
+            check(struct.unpack_from('<III', data, descriptor) == (entry.CRC, entry.compress_size, entry.file_size),
+                  'snapshot ZIP data descriptor differs')
+            offset = descriptor + 12
+        else:
+            check((crc, compressed, size) == (entry.CRC, entry.compress_size, entry.file_size),
+                  'snapshot local ZIP sizes or CRC differ')
+            offset = end
+    check(offset == archive.start_dir, 'unindexed snapshot ZIP local records')
+
+
 def verify_jar(data, version, revision=None):
     check(len(data) <= LIMIT, 'JAR size limit')
     with zipfile.ZipFile(io.BytesIO(data)) as jar:
@@ -360,6 +435,9 @@ def verify_jar(data, version, revision=None):
         check([line for line in props if line.startswith('version=')] == ['version=' + version], 'JAR version differs from expected version')
         snapshot = tuple(map(int, version.split('.'))) >= (0, 1, 2)
         entrypoint = 'io.github.wouthh.tradeassistant.runtime.SnapshotClassLoader' if snapshot else 'io.github.wouthh.tradeassistant.protocol.TradeAssistantExtension'
+        if snapshot:
+            fields = snapshot_manifest(jar.read('META-INF/MANIFEST.MF'))
+            verify_snapshot_stream(jar, data)
         check(fields.get('main-class') == entrypoint, 'wrong JAR entry point')
         check('io/github/wouthh/tradeassistant/protocol/TradeAssistantExtension.class' in jar.namelist(), 'JAR entrypoint class missing')
         if snapshot:

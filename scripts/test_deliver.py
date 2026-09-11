@@ -59,6 +59,36 @@ class PackageTests(unittest.TestCase):
                 changed.writestr(name, data)
         return output.getvalue()
 
+    def test_snapshot_data_descriptors_match_streamed_entries(self):
+        class StreamingBuffer(io.BytesIO):
+            def seek(self, *args):
+                raise io.UnsupportedOperation("stream")
+        output = StreamingBuffer()
+        with zipfile.ZipFile(io.BytesIO(self.snapshot_jar())) as original, zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED) as changed:
+            for entry in original.infolist():
+                changed.writestr(entry.filename, original.read(entry))
+        valid = output.getvalue()
+        d.verify_jar(valid, '0.1.3', SOURCE)
+        with zipfile.ZipFile(io.BytesIO(valid)) as archive:
+            entry = archive.infolist()[0]
+        name_size, extra_size = struct.unpack_from('<HH', valid, entry.header_offset + 26)
+        descriptor = entry.header_offset + 30 + name_size + extra_size + entry.compress_size
+        self.assertEqual(b'PK\x07\x08', valid[descriptor:descriptor + 4])
+        for field in (4, 8, 12):
+            with self.subTest(field=field):
+                corrupted = bytearray(valid)
+                value = struct.unpack_from('<I', corrupted, descriptor + field)[0]
+                struct.pack_into('<I', corrupted, descriptor + field, value ^ 1)
+                with self.assertRaises(d.Refused):
+                    d.verify_jar(corrupted, '0.1.3', SOURCE)
+
+    def test_snapshot_manifest_uses_java_header_and_section_grammar(self):
+        d.verify_jar(self.snapshot_jar(attributes='Extra: first\n continuation\n\nName: resource\nDigest: value\n'), '0.1.3', SOURCE)
+        for attributes in ('Bad@Name: x\n', 'X' * 71 + ': x\n', 'Long: ' + 'x' * 512 + '\n',
+                           '\nBad: section-without-name\n', '\nName: resource\nBad@Name: x\n'):
+            with self.subTest(attributes=attributes), self.assertRaises(d.Refused):
+                d.verify_jar(self.snapshot_jar(attributes=attributes), '0.1.3', SOURCE)
+
     def test_snapshot_package_rejects_loader_invalid_entries(self):
         d.verify_jar(self.snapshot_jar([('assets/', b''), ('assets/value', b'ok')]), '0.1.3', SOURCE)
         cases = [[('dup', b'one'), ('dup', b'two')], [('/absolute', b'x')],
