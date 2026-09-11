@@ -356,8 +356,9 @@ def verify_jar(data, version, revision=None):
             else:
                 key, sep, value = line.partition(': '); key = key.lower()
                 check(sep and key not in fields, 'ambiguous JAR manifest'); fields[key] = value; last = key
-        check(fields.get('main-class') == 'io.github.wouthh.tradeassistant.protocol.TradeAssistantExtension', 'wrong JAR entry point')
+        check(fields.get('main-class') == 'io.github.wouthh.tradeassistant.runtime.SnapshotClassLoader', 'wrong JAR entry point')
         check('io/github/wouthh/tradeassistant/protocol/TradeAssistantExtension.class' in jar.namelist(), 'JAR entrypoint class missing')
+        check('io/github/wouthh/tradeassistant/runtime/SnapshotClassLoader.class' in jar.namelist(), 'JAR bootstrap class missing')
         props = jar.read('META-INF/maven/io.github.wouthh/g-earth-trade-assistant/pom.properties').decode().splitlines()
         check([line for line in props if line.startswith('version=')] == ['version=' + version], 'JAR version differs from expected version')
         if tuple(map(int, version.split('.'))) >= (0, 1, 1):

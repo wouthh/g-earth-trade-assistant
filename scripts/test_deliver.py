@@ -23,7 +23,8 @@ def synthetic_jar(version=VERSION, source=SOURCE):
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w') as jar:
         jar.writestr('io/github/wouthh/tradeassistant/protocol/TradeAssistantExtension.class', b'synthetic class')
-        jar.writestr('META-INF/MANIFEST.MF', 'Main-Class: io.github.wouthh.tradeassistant.protocol.TradeAssistantExtension\n')
+        jar.writestr('META-INF/MANIFEST.MF', 'Main-Class: io.github.wouthh.tradeassistant.runtime.SnapshotClassLoader\n')
+        jar.writestr('io/github/wouthh/tradeassistant/runtime/SnapshotClassLoader.class', b'synthetic bootstrap')
         jar.writestr('META-INF/maven/io.github.wouthh/g-earth-trade-assistant/pom.properties', 'version=' + version + '\n')
         if version != '0.1.0':
             jar.writestr('META-INF/tradeassistant-build.properties', 'source=' + source + '\nversion=' + version + '\n')

@@ -21,15 +21,15 @@ python3 -I -B scripts/bootstrap.py
 ./mvnw clean verify
 python3 -I -B -m unittest discover -s scripts -p 'test_*.py'
 python3 -I -B scripts/check-public.py
-java -jar target/g-earth-trade-assistant-0.1.1.jar --demo
+java -jar target/g-earth-trade-assistant-0.1.2.jar --demo
 ```
 
 Bootstrap downloads an exact public G-Earth source revision, verifies its archive SHA-256 and builds the API in `.build/`. Maven dependencies are project-local. No installed G-Earth JAR, unpublished Maven cache, or other extension project is required. Bootstrap must run once in every fresh checkout; rerunning it always builds freshly extracted, verified source. The wrapper downloads Maven 3.9.16. Set `MAVEN_USER_HOME` to an isolated directory to isolate the wrapper's distribution cache too. See [protocol/build evidence](docs/PROTOCOL.md) and [third-party notices](THIRD-PARTY-NOTICES.md).
 
 Artifacts:
 
-- `target/g-earth-trade-assistant-0.1.1.jar` — executable shaded extension JAR.
-- `target/G-Earth-Trade-Assistant-0.1.1-extension.zip` — loadable extension folder with launcher, JAR and notices.
+- `target/g-earth-trade-assistant-0.1.2.jar` — executable shaded extension JAR.
+- `target/G-Earth-Trade-Assistant-0.1.2-extension.zip` — loadable extension folder with launcher, JAR and notices.
 - GitHub Actions artifact **g-earth-trade-assistant** — the same two build outputs, retained for 14 days.
 
 `--demo` is network-free and writes no settings or journals. The optional private-evidence test accepts a local task/capture document through the `privateEvidence` Maven property; it emits only structural results. Raw evidence must never be checked in. Standard CI excludes that local-only test.

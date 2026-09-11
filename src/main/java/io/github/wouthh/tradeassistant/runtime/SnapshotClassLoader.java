@@ -3,7 +3,6 @@ package io.github.wouthh.tradeassistant.runtime;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.lang.reflect.InvocationTargetException;
 import java.net.URL;
 import java.net.URLConnection;
 import java.net.URLStreamHandler;
@@ -159,23 +158,34 @@ public final class SnapshotClassLoader extends SecureClassLoader {
                 resource == null ? java.util.List.of() : java.util.List.of(resource));
     }
 
-    public static boolean launchIfNeeded(Class<?> anchor, String[] args) throws Exception {
-        if (anchor.getClassLoader() instanceof SnapshotClassLoader) return false;
-        Path path = Path.of(anchor.getProtectionDomain().getCodeSource().getLocation().toURI());
-        SnapshotClassLoader loader = new SnapshotClassLoader(path);
-        ClassLoader previous = Thread.currentThread().getContextClassLoader();
+    /** JDK-only manifest entrypoint; product code cannot initialize before the snapshot. */
+    public static void main(String[] arguments) {
+        ClassLoader originalContext = Thread.currentThread().getContextClassLoader();
+        java.lang.reflect.Method runtimeMain;
         try {
-            Thread.currentThread().setContextClassLoader(loader);
-            loader.loadClass(anchor.getName())
-                    .getMethod("main", String[].class)
-                    .invoke(null, (Object) args);
-        } catch (InvocationTargetException failure) {
-            if (failure.getCause() instanceof Exception exception) throw exception;
-            if (failure.getCause() instanceof Error error) throw error;
-            throw failure;
-        } finally {
-            Thread.currentThread().setContextClassLoader(previous);
+            var location =
+                    SnapshotClassLoader.class.getProtectionDomain().getCodeSource().getLocation();
+            var snapshot = new SnapshotClassLoader(Path.of(location.toURI()));
+            Thread.currentThread().setContextClassLoader(snapshot);
+            var runtime =
+                    Class.forName(
+                            "io.github.wouthh.tradeassistant.protocol.TradeAssistantExtension",
+                            true,
+                            snapshot);
+            runtimeMain = runtime.getMethod("main", String[].class);
+        } catch (Exception | LinkageError invalidArchive) {
+            Thread.currentThread().setContextClassLoader(originalContext);
+            System.err.println("Extension archive could not be loaded safely.");
+            System.exit(2);
+            return;
         }
-        return true;
+        try {
+            runtimeMain.invoke(null, (Object) arguments);
+        } catch (Exception | LinkageError runtimeFailure) {
+            System.err.println("Extension runtime stopped unexpectedly.");
+            System.exit(3);
+        } finally {
+            Thread.currentThread().setContextClassLoader(originalContext);
+        }
     }
 }
