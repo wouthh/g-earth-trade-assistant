@@ -1,6 +1,6 @@
 # G-Earth Trade Assistant
 
-Standalone Java/Swing extension for **Habbo Origins through G-Earth**. It converts explicitly selected, observed bronze currency furniture using one serialized worker. It is independently authored and is not an official Habbo or G-Earth product.
+Standalone Java/Swing extension for **Habbo Origins through G-Earth**. It converts explicitly selected, observed bronze currency furniture using one serialized worker. It is not an official Habbo or G-Earth product.
 
 ## What works in v1
 
